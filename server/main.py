@@ -50,7 +50,7 @@ def extract_patent_data(text: str) -> dict:
     title_m = re.search(r'(?:발\s*명\s*의\s*명\s*칭|발\s*명\s*의\s*국\s*문\s*명\s*칭)[\s:]*([^\n]+(?:\n[^\n]+)?)', text)
     if title_m: 
         raw_title = title_m.group(1).replace('\n', ' ').strip()
-        # [수정 1] 기관명(워터마크) 노이즈 완벽 제거 로직 추가
+        # [해결 3] 기관명(워터마크) 노이즈 완벽 제거 로직
         raw_title = re.sub(r'지\s*식\s*재\s*산\s*처\s*장', '', raw_title)
         raw_title = re.sub(r'특\s*허\s*청\s*장', '', raw_title)
         data["inventionTitle"] = re.sub(r'\s+', ' ', raw_title).strip()
@@ -79,7 +79,7 @@ def extract_patent_data(text: str) -> dict:
     return data
 
 # ==========================================
-# 2. 청구항 해체 및 종속/독립 트리 분석
+# 2. 청구항 해체 및 종속/독립 트리 분석 (수정됨)
 # ==========================================
 def parse_claims(text: str):
     scope_match = re.search(r'(?:【|\[)\s*청\s*구\s*범\s*위\s*(?:】|\])([\s\S]*?)(?=(?:【|\[)\s*요\s*약\s*서|(?:【|\[)\s*도\s*면|(?:【|\[)\s*발\s*명\s*의\s*설\s*명|$)', text)
@@ -116,34 +116,62 @@ def parse_claims(text: str):
         
         tail_map[no] = tail
         is_deleted = '삭제' in claim_text[:10]
+        
+        # [해결 1] 정밀한 인용항 추출 및 다중종속항 판별 로직
         references = []
         is_multi = False
-
-        ref_matches = re.findall(r'제\s*(\d+)\s*항', claim_text)
         
+        if not is_deleted:
+            # 문장 초반 80자(인용 구역)만 분리
+            intro = claim_text[:80]
+            cut_match = re.search(r'(에\s*있어서|에\s*따[르른]|을\s*따르는)', intro)
+            
+            if cut_match:
+                ref_part = intro[:cut_match.end()] # "제1항 내지 제3항에 있어서" 까지만 추출
+                
+                if re.search(r'(제|청구항|항)', ref_part):
+                    nums = [int(n) for n in re.findall(r'\d+', ref_part)]
+                    if nums:
+                        if '내지' in ref_part or '~' in ref_part:
+                            is_multi = True
+                            if len(nums) >= 2:
+                                references = list(range(min(nums), max(nums) + 1))
+                            else:
+                                references = nums
+                        else:
+                            if len(nums) > 1 and ('또는' in ref_part or ',' in ref_part or '및' in ref_part):
+                                is_multi = True
+                            references = sorted(list(set(nums)))
+            
+            # 폴백: 위 정규식에 안 걸렸을 경우 기본 탐색
+            if not references:
+                fallback_matches = re.findall(r'(?:제|청구항)\s*(\d+)\s*항?', intro)
+                if fallback_matches:
+                    references = sorted(list(set(int(m) for m in fallback_matches)))
+                    if len(references) > 1:
+                        is_multi = True
+
         if is_deleted:
             is_independent = False
             reason = "삭제된 청구항"
-        elif not ref_matches:
+        elif not references:
             is_independent = True
             reason = "인용문구가 없어 원칙적 독립항으로 판단함"
         else:
-            references = [int(m) for m in ref_matches]
-            if '또는' in claim_text or '내지' in claim_text: is_multi = True
-            
             first_ref = references[0]
             ref_tail = tail_map.get(first_ref, "")
             
-            # [수정 2] 띄어쓰기를 모두 제거하여 '사실상 동일한 단어' 판단
-            ref_tail_nospace = ref_tail.replace(" ", "")
-            tail_nospace = tail.replace(" ", "")
+            # [해결 2] 모든 띄어쓰기를 없애고 비교 ("처리방법" == "처리 방법")
+            ref_tail_clean = re.sub(r'\s+', '', ref_tail)
+            tail_clean = re.sub(r'\s+', '', tail)
             
-            if ref_tail_nospace and ref_tail_nospace != tail_nospace:
+            if ref_tail_clean and ref_tail_clean != tail_clean:
                 is_independent = True
-                reason = f"인용문구가 있으나, 인용항({ref_tail})과 말미({tail})가 달라 독립항으로 판단함"
+                reason = f"인용문구가 있으나, 인용항({ref_tail})과 말미({tail})의 범주가 달라 독립항으로 판단함"
             else:
                 is_independent = False
-                reason = f"다중종속항 (제{references}항 참조)" if is_multi else f"종속항 (제{references[0]}항 참조)"
+                ref_str = ", ".join(map(str, references))
+                reason = f"다중종속항 (제[{ref_str}]항 참조)" if is_multi else f"종속항 (제{ref_str}항 참조)"
 
         if is_independent:
             indep_set.add(no)
@@ -157,15 +185,13 @@ def parse_claims(text: str):
             "reason": reason
         })
 
-    # [수정 3] 종속항 평균 깊이 산술 로직 정밀화 (반복적 최단 경로 탐색)
+    # 종속항 평균 깊이 산술 로직 정밀화 (반복적 최단 경로 탐색)
     depths = {}
     
-    # 1. 독립항은 모두 깊이 1로 초기화
     for r in rows:
         if not r["isDeleted"] and r["isIndependent"]:
-            depths[r["no"]] = 1
+            depths[r["no"]] = 1 # 독립항은 무조건 깊이 1
 
-    # 2. 종속항들의 깊이를 연쇄적으로 계산 (더 이상 깊이가 변하지 않을 때까지 반복)
     changed = True
     while changed:
         changed = False
@@ -179,14 +205,12 @@ def parse_claims(text: str):
             if valid_ref_depths:
                 new_depth = min(valid_ref_depths) + 1
             else:
-                new_depth = 2 # 만약 부모항을 찾을 수 없는 예외 발생 시 기본값 2
+                new_depth = 2 
                 
-            # 깊이가 갱신되었다면 적용하고 다시 반복
             if no not in depths or depths[no] != new_depth:
                 depths[no] = new_depth
                 changed = True
 
-    # 3. 계산된 종속항 깊이들의 평균 도출
     dep_depths = [depths[r["no"]] for r in rows if not r["isIndependent"] and not r["isDeleted"] and r["no"] in depths]
     avg_depth = round(sum(dep_depths) / len(dep_depths), 3) if dep_depths else 0
 
