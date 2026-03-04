@@ -35,58 +35,129 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
         text = "\n".join([para.text for para in doc.paragraphs])
     return text
 
-def extract_patent_data(text: str) -> dict:
+def extract_patent_data(text: str, is_registration: bool = False) -> dict:
     data = {
         "applicationNumber": "-", "filingDate": "-", "inventionTitle": "-", "inventors": "-",
         "ipcCount": 1, "inventorCount": 0, "drawingCount": 0, "descWordLen": 0
     }
     
-    app_no = re.search(r'(?:출\s*원\s*번\s*호|application\s*no)[^\d]*([0-9]{2,4}[-\s]?[0-9]{4}[-\s]?[0-9]{7,8})', text, re.IGNORECASE)
-    if app_no: data["applicationNumber"] = re.sub(r'\s+', '-', app_no.group(1))
+    if is_registration:
+        # [등록공보 모드] (PDF 포맷)
+        app_no = re.search(r'\(\s*21\s*\)\s*출\s*원\s*번\s*호[^\d]*([0-9]{2,4}[-\s]?[0-9]{4}[-\s]?[0-9]{7,8})', text)
+        if app_no: data["applicationNumber"] = re.sub(r'\s+', '-', app_no.group(1))
 
-    date_m = re.search(r'(?:출\s*원\s*일\s*자|출\s*원\s*일|filing\s*date)[^\d]*([0-9]{4}[-./\s]?[0-9]{2}[-./\s]?[0-9]{2})', text, re.IGNORECASE)
-    if date_m: data["filingDate"] = re.sub(r'[-./\s]+', '.', date_m.group(1))
+        date_m = re.search(r'\(\s*22\s*\)\s*출\s*원\s*일\s*자[^\d]*([0-9]{4}년\s*[0-9]{2}월\s*[0-9]{2}일)', text)
+        if date_m: data["filingDate"] = re.sub(r'[년월일\s]+', '.', date_m.group(1)).strip('.')
 
-    title_m = re.search(r'(?:발\s*명\s*의\s*명\s*칭|발\s*명\s*의\s*국\s*문\s*명\s*칭)[\s:]*([^\n]+(?:\n[^\n]+)?)', text)
-    if title_m: 
-        raw_title = title_m.group(1).replace('\n', ' ').strip()
-        # [해결 3] 기관명(워터마크) 노이즈 완벽 제거 로직
-        raw_title = re.sub(r'지\s*식\s*재\s*산\s*처\s*장', '', raw_title)
-        raw_title = re.sub(r'특\s*허\s*청\s*장', '', raw_title)
-        data["inventionTitle"] = re.sub(r'\s+', ' ', raw_title).strip()
+        # 🚀 [수정] 발명의 명칭 뒤에 붙는 (57) 요약 등 노이즈 제거
+        title_m = re.search(r'\(\s*54\s*\)\s*발\s*명\s*의\s*명\s*칭[\s:]*([^\n]+(?:\n[^\n]+)?)', text)
+        if title_m: 
+            raw_title = title_m.group(1).replace('\n', ' ').strip()
+            # "(57) 요 약" 또는 "심사관" 텍스트를 기준으로 그 앞부분만 취함
+            raw_title = re.split(r'\(\s*57\s*\)\s*요\s*약?|심\s*사\s*관\s*:', raw_title)[0]
+            data["inventionTitle"] = re.sub(r'\s+', ' ', raw_title).strip()
 
-    inventor_matches = re.findall(r'(?:【|\[)\s*성\s*명\s*(?:】|\])[\s:]*([가-힣]{2,5})', text)
-    if inventor_matches:
-        data["inventors"] = ", ".join(inventor_matches)
-        data["inventorCount"] = len(inventor_matches)
+        inv_block = re.search(r'\(\s*72\s*\)\s*발\s*명\s*자([\s\S]*?)(?:\(\s*74\s*\)|\(\s*54\s*\)|$)', text)
+        if inv_block:
+            names = re.findall(r'(?m)^\s*([가-힣]{2,5})\s*$', inv_block.group(1))
+            if names:
+                data["inventors"] = ", ".join(names)
+                data["inventorCount"] = len(names)
     else:
-        inv_m = re.search(r'발\s*명\s*자\s*성\s*명[\s\S]*?\n\s*([가-힣\s]+?)(?=\n|발명의 명칭)', text)
-        if inv_m:
-            inv_list = inv_m.group(1).split()
-            data["inventors"] = ", ".join(inv_list)
-            data["inventorCount"] = len(inv_list)
+        # [출원서류 모드] (기존 XML/Word 포맷)
+        app_no = re.search(r'(?:출\s*원\s*번\s*호|application\s*no)[^\d]*([0-9]{2,4}[-\s]?[0-9]{4}[-\s]?[0-9]{7,8})', text, re.IGNORECASE)
+        if app_no: data["applicationNumber"] = re.sub(r'\s+', '-', app_no.group(1))
 
+        date_m = re.search(r'(?:출\s*원\s*일\s*자|출\s*원\s*일|filing\s*date)[^\d]*([0-9]{4}[-./\s]?[0-9]{2}[-./\s]?[0-9]{2})', text, re.IGNORECASE)
+        if date_m: data["filingDate"] = re.sub(r'[-./\s]+', '.', date_m.group(1))
+
+        title_m = re.search(r'(?:발\s*명\s*의\s*명\s*칭|발\s*명\s*의\s*국\s*문\s*명\s*칭)[\s:]*([^\n]+(?:\n[^\n]+)?)', text)
+        if title_m: 
+            raw_title = title_m.group(1).replace('\n', ' ').strip()
+            raw_title = re.sub(r'지\s*식\s*재\s*산\s*처\s*장', '', raw_title)
+            raw_title = re.sub(r'특\s*허\s*청\s*장', '', raw_title)
+            data["inventionTitle"] = re.sub(r'\s+', ' ', raw_title).strip()
+
+        inventor_matches = re.findall(r'(?:【|\[)\s*성\s*명\s*(?:】|\])[\s:]*([가-힣]{2,5})', text)
+        if inventor_matches:
+            data["inventors"] = ", ".join(inventor_matches)
+            data["inventorCount"] = len(inventor_matches)
+        else:
+            inv_m = re.search(r'발\s*명\s*자\s*성\s*명[\s\S]*?\n\s*([가-힣\s]+?)(?=\n|발명의 명칭)', text)
+            if inv_m:
+                inv_list = inv_m.group(1).split()
+                data["inventors"] = ", ".join(inv_list)
+                data["inventorCount"] = len(inv_list)
+
+    # 공통: IPC, 도면수, 발명의 설명 길이 추출 (양식 차이가 크지 않은 부분)
     ipc_matches = re.findall(r'[A-H]\d{2}[A-Z]', text)
     if ipc_matches: data["ipcCount"] = len(set(ipc_matches))
 
-    figs = re.findall(r'(?:【|\[)\s*도\s*(\d+)\s*(?:】|\])', text)
+    figs = re.findall(r'(?:【|\[)?\s*도\s*(\d+)\s*(?:】|\])?', text)
     if figs: data["drawingCount"] = len(set(int(n) for n in figs))
 
-    desc_match = re.search(r'(?:【|\[)\s*발\s*명\s*의\s*설\s*명\s*(?:】|\])([\s\S]*?)(?=(?:【|\[)\s*청\s*구\s*범\s*위\s*(?:】|\])|$)', text)
+    pattern = r'(?:(?:【|\[)?\s*발\s*명\s*의\s*설\s*명\s*(?:】|\])?|(?:^|\n)\s*명\s*세\s*서\s*\n\s*기\s*술\s*분\s*야)([\s\S]*?)(?=(?:(?:【|\[)?\s*청\s*구\s*범\s*위\s*(?:】|\])?|(?:^|\n)\s*도\s*면\s*\n|$))'
+
+
+    desc_match = re.search(pattern, text)
     if desc_match: data["descWordLen"] = len(desc_match.group(1).split())
     else: data["descWordLen"] = len(text.split()) // 2
 
     return data
 
 # ==========================================
-# 2. 청구항 해체 및 종속/독립 트리 분석 (수정됨)
+# 2. 청구항 카테고리(말미) 지능형 비교 함수
 # ==========================================
-def parse_claims(text: str):
-    scope_match = re.search(r'(?:【|\[)\s*청\s*구\s*범\s*위\s*(?:】|\])([\s\S]*?)(?=(?:【|\[)\s*요\s*약\s*서|(?:【|\[)\s*도\s*면|(?:【|\[)\s*발\s*명\s*의\s*설\s*명|$)', text)
-    scope_text = scope_match.group(1) if scope_match else text
-
-    claims_raw = re.split(r'(?:【|\[)\s*청\s*구\s*항\s*(\d+)\s*(?:】|\])', scope_text)
+def is_same_category(ref_tail, curr_tail):
+    ref_clean = re.sub(r'\s+', '', ref_tail) if ref_tail else ""
+    curr_clean = re.sub(r'\s+', '', curr_tail) if curr_tail else ""
     
+    if not ref_clean or not curr_clean: return False
+    if ref_clean == curr_clean: return True
+    
+    ref_last = ref_tail.split()[-1] if ref_tail else ""
+    curr_last = curr_tail.split()[-1] if curr_tail else ""
+    if ref_last and curr_last and ref_last == curr_last: return True
+    
+    if ref_clean.endswith(curr_clean) or curr_clean.endswith(ref_clean): return True
+    
+    core_suffixes = [
+        "시스템", "방법", "장치", "지그", "조성물", "단말기", "단말", "서버", "모듈",
+        "발효조", "구조체", "플랫폼", "네트워크", "센서", "부재", "물질", "프로그램", 
+        "기록매체", "매체", "기기", "공정", "기재", "장비", "설비", "어셈블리", "유닛"
+    ]
+    for suf in core_suffixes:
+        if ref_clean.endswith(suf) and curr_clean.endswith(suf):
+            return True
+            
+    core_1char = ["망", "조", "기", "부", "재", "제", "액", "층", "판", "막", "물", "폼", "함", "통", "관"]
+    for suf in core_1char:
+        if ref_clean.endswith(suf) and curr_clean.endswith(suf):
+            return True
+            
+    return False
+
+# ==========================================
+# 3. 청구항 해체 및 종속/독립 트리 분석 
+# ==========================================
+import re
+
+def parse_claims(text: str, is_registration: bool = False):
+    # 전역 바닥글 청소 (공통)
+    text = re.sub(r'(?m)^\s*\d+\s*-\s*\d+\s*$', '', text)
+    text = re.sub(r'(?m)^\s*\d{4}[-./]\d{2}[-./]\d{2}\s*$', '', text)
+
+    if is_registration:
+        # [등록공보 모드]
+        scope_match = re.search(r'(?:특\s*허\s*)?청\s*구\s*(?:의\s*)?범\s*위\s*(?:】|\])?([\s\S]*?)(?=(?:【|\[)?\s*요\s*약\s*(?:서|의\s*설\s*명)?\s*(?:】|\])?|(?:【|\[)?\s*도\s*면\s*(?:의\s*간\s*단\s*한\s*설\s*명)?\s*(?:】|\])?|(?:【|\[)?\s*발\s*명\s*의\s*설\s*명\s*(?:】|\])?|$)', text)
+        scope_text = scope_match.group(1) if scope_match else text
+        claims_raw = re.split(r'(?m)^\s*(?:【|\[)?\s*청\s*구\s*항\s*(\d+)\s*(?:】|\])?\s*$', scope_text)
+    else:
+        # [출원서류 모드]
+        scope_match = re.search(r'(?:【|\[)\s*청\s*구\s*범\s*위\s*(?:】|\])([\s\S]*?)(?=(?:【|\[)\s*요\s*약\s*서|(?:【|\[)\s*도\s*면|(?:【|\[)\s*발\s*명\s*의\s*설\s*명|$)', text)
+        scope_text = scope_match.group(1) if scope_match else text
+        claims_raw = re.split(r'(?:【|\[)\s*청\s*구\s*항\s*(\d+)\s*(?:】|\])', scope_text)
+
     rows = []
     indep_set = set()
     cite_map = {}
@@ -100,36 +171,43 @@ def parse_claims(text: str):
         claim_text = claims_raw[i+1].strip()
         if not claim_text: continue
 
-        # 날짜 및 페이지 번호 노이즈 제거
-        noise_removed = re.sub(r'\d{4}[-./]\d{2}[-./]\d{2}', '', claim_text) 
-        noise_removed = re.sub(r'(?<!\w)\d+\s*-\s*\d+(?!\w)', '', noise_removed) 
-        
-        cleaned = re.sub(r'[。\.\s;,:\)\]\}]+$', '', noise_removed).strip()
-        tokens = cleaned.split()
-        
-        boundary_re = re.compile(r'(하는|한|된|인|하여|가진|갖는)$')
-        tail = tokens[-1] if tokens else "미상"
-        for idx in range(len(tokens)-1, max(-1, len(tokens)-10), -1):
-            if boundary_re.search(tokens[idx]):
-                tail = " ".join(tokens[idx+1:])
-                break
-        
-        tail_map[no] = tail
         is_deleted = '삭제' in claim_text[:10]
         
-        # [해결 1] 정밀한 인용항 추출 및 다중종속항 판별 로직
         references = []
         is_multi = False
-        
-        if not is_deleted:
-            # 문장 초반 80자(인용 구역)만 분리
+
+        if is_deleted:
+            tail = "삭제"
+            tail_map[no] = tail
+            is_independent = False
+            reason = "삭제된 청구항"
+        else:
+            while True:
+                prev = claim_text
+                claim_text = re.sub(r'등\s*록\s*특\s*허\s*\d+-\d+[\s\d\-]*$', '', claim_text).strip()
+                claim_text = re.sub(r'\d{4}[-./]\d{2}[-./]\d{2}\s*$', '', claim_text).strip()
+                claim_text = re.sub(r'\d+\s*-\s*\d+\s*$', '', claim_text).strip()
+                claim_text = re.sub(r'[。\.\s;,:\)\]\}]+$', '', claim_text).strip()
+                if prev == claim_text:
+                    break
+            
+            tokens = claim_text.split()
+            boundary_re = re.compile(r'(하는|한|된|인|하여|가진|갖는)$')
+            tail = tokens[-1] if tokens else "미상"
+            for idx in range(len(tokens)-1, max(-1, len(tokens)-10), -1):
+                if boundary_re.search(tokens[idx]):
+                    tail = " ".join(tokens[idx+1:])
+                    break
+            
+            tail_map[no] = tail
+            
             intro = claim_text[:80]
             cut_match = re.search(r'(에\s*있어서|에\s*따[르른]|을\s*따르는)', intro)
             
             if cut_match:
-                ref_part = intro[:cut_match.end()] # "제1항 내지 제3항에 있어서" 까지만 추출
-                
-                if re.search(r'(제|청구항|항)', ref_part):
+                ref_part = intro[:cut_match.end()]
+                # 🚀 [방어 1] "제1 방법" 등을 걸러내기 위해, 반드시 '항' 또는 '청구항' 단어가 있을 때만 인용항으로 취급
+                if re.search(r'(청구항|항)', ref_part):
                     nums = [int(n) for n in re.findall(r'\d+', ref_part)]
                     if nums:
                         if '내지' in ref_part or '~' in ref_part:
@@ -143,39 +221,42 @@ def parse_claims(text: str):
                                 is_multi = True
                             references = sorted(list(set(nums)))
             
-            # 폴백: 위 정규식에 안 걸렸을 경우 기본 탐색
             if not references:
-                fallback_matches = re.findall(r'(?:제|청구항)\s*(\d+)\s*항?', intro)
-                if fallback_matches:
-                    references = sorted(list(set(int(m) for m in fallback_matches)))
+                # 🚀 [방어 2] 문장 중간에서 숫자를 찾을 때도 무조건 뒤에 '항'이 붙어있는 숫자만 추출하도록 정규식 강화
+                fallback_matches = re.finditer(r'(?:제\s*)?(\d+)\s*항|청구항\s*(\d+)', intro)
+                nums = []
+                for m in fallback_matches:
+                    if m.group(1): nums.append(int(m.group(1)))
+                    if m.group(2): nums.append(int(m.group(2)))
+                
+                if nums:
+                    references = sorted(list(set(nums)))
                     if len(references) > 1:
                         is_multi = True
 
-        if is_deleted:
-            is_independent = False
-            reason = "삭제된 청구항"
-        elif not references:
-            is_independent = True
-            reason = "인용문구가 없어 원칙적 독립항으로 판단함"
-        else:
-            first_ref = references[0]
-            ref_tail = tail_map.get(first_ref, "")
-            
-            # [해결 2] 모든 띄어쓰기를 없애고 비교 ("처리방법" == "처리 방법")
-            ref_tail_clean = re.sub(r'\s+', '', ref_tail)
-            tail_clean = re.sub(r'\s+', '', tail)
-            
-            if ref_tail_clean and ref_tail_clean != tail_clean:
+            # 🚀 [방어 3] 혹시라도 파싱 오류로 인해 '자기 자신'을 인용항으로 삼은 경우, 즉시 삭제하여 모순 해결
+            if no in references:
+                references.remove(no)
+
+            if not references:
                 is_independent = True
-                reason = f"인용문구가 있으나, 인용항({ref_tail})과 말미({tail})의 범주가 달라 독립항으로 판단함"
+                reason = "인용문구가 없어 원칙적 독립항으로 판단함"
             else:
-                is_independent = False
-                ref_str = ", ".join(map(str, references))
-                reason = f"다중종속항 (제[{ref_str}]항 참조)" if is_multi else f"종속항 (제{ref_str}항 참조)"
+                first_ref = references[0]
+                ref_tail = tail_map.get(first_ref, "")
+                
+                if not is_same_category(ref_tail, tail):
+                    is_independent = True
+                    reason = f"인용항({ref_tail})과 현재항({tail})의 대상어 범주가 달라 독립항으로 판단함"
+                else:
+                    is_independent = False
+                    ref_str = ", ".join(map(str, references))
+                    reason = f"다중종속항 (제[{ref_str}]항 참조)" if is_multi else f"종속항 (제{ref_str}항 참조)"
 
         if is_independent:
             indep_set.add(no)
-            indep_word_len += len(tokens)
+            if not is_deleted:
+                indep_word_len += len(tokens)
 
         cite_map[no] = references
         rows.append({
@@ -185,21 +266,22 @@ def parse_claims(text: str):
             "reason": reason
         })
 
-    # 종속항 평균 깊이 산술 로직 정밀화 (반복적 최단 경로 탐색)
     depths = {}
-    
     for r in rows:
         if not r["isDeleted"] and r["isIndependent"]:
-            depths[r["no"]] = 1 # 독립항은 무조건 깊이 1
+            depths[r["no"]] = 1 
 
     changed = True
-    while changed:
+    loop_limit = 100 # 🚀 [방어 4] 어떠한 경우에도 무한루프에 빠져 서버가 죽지 않도록 최대 반복 횟수(100회) 제한 설정
+    loops = 0
+    
+    while changed and loops < loop_limit:
+        loops += 1
         changed = False
         for r in rows:
             if r["isDeleted"] or r["isIndependent"]: continue
             no = r["no"]
             
-            # 현재 청구항이 인용하는 부모 항들의 깊이 중 '가장 짧은 깊이' 탐색
             valid_ref_depths = [depths[ref] for ref in r["references"] if ref in depths]
             
             if valid_ref_depths:
@@ -233,13 +315,25 @@ def parse_claims(text: str):
     }
 
 # ==========================================
-# 3. SMART 산식 및 가중치 계산 모듈
+# 4. SMART 산식 및 가중치 계산 모듈
 # ==========================================
-def calculate_smart_score(claims_info: dict, patent_info: dict, fast_track: int, oa_count: int, tech_field: str, annuity_count: int):
+# ==========================================
+# 4. SMART 산식 및 가중치 계산 모듈
+# ==========================================
+# 🚀 파라미터에 early_publication (조기공개여부) 추가 (기본값 0)
+def calculate_smart_score(claims_info: dict, patent_info: dict, fast_track: int, oa_count: int, tech_field: str, annuity_count: int, early_publication: int = 0):
     v = {
         "ipc": patent_info.get("ipcCount", 1),
-        "appeal": 0, "assignee_change": 0, "pledge": 0, "divisional_priority": 0, "licensee": 0,
-        "prior_art_foreign": 0, "total_cited_by": 0, "cited_ref_foreign": 0, "cited_vs_filing_gap": 0, "family_country": 0,
+        "appeal": patent_info.get("appeal", 0), 
+        "assignee_change": patent_info.get("assignee_change", 0), 
+        "pledge": patent_info.get("pledge", 0), 
+        "divisional_priority": patent_info.get("divisional_priority", 0), 
+        "licensee": patent_info.get("licensee", 0),
+        "prior_art_foreign": patent_info.get("prior_art_foreign", 0), 
+        "total_cited_by": patent_info.get("total_cited_by", 0), 
+        "cited_ref_foreign": patent_info.get("cited_ref_foreign", 0), 
+        "cited_vs_filing_gap": patent_info.get("cited_vs_filing_gap", 0), 
+        "family_country": patent_info.get("family_country", 0),
         "drawing": patent_info.get("drawingCount", 0),
         "desc_word_len": patent_info.get("descWordLen", 0),
         "inventor_count": patent_info.get("inventorCount", 1),
@@ -250,10 +344,12 @@ def calculate_smart_score(claims_info: dict, patent_info: dict, fast_track: int,
         "avg_depth": claims_info["avgDepth"],
         "fast_track": fast_track,
         "oa_count": oa_count,
-        "annuity": annuity_count if annuity_count > 0 else 1
+        "annuity": annuity_count if annuity_count > 0 else 1,
+        "early_publication": early_publication # 🚀 새로 추가된 변수 매핑
     }
 
     if tech_field == "전기 전자 IT":
+        # 전기 전자 IT는 0.78 가중치 적용
         raw = (0.06816 * v["ipc"]) + (-0.63435 * v["appeal"]) + (1.02710 * v["assignee_change"]) + \
               (0.87428 * v["pledge"]) + (-0.01293 * v["drawing"]) + (-0.00015 * v["indep_word_len"]) + \
               (0.10874 * v["indep_count"]) + (-0.00000 * v["desc_word_len"]) + (-0.02668 * v["inventor_count"]) + \
@@ -261,8 +357,11 @@ def calculate_smart_score(claims_info: dict, patent_info: dict, fast_track: int,
               (0.02098 * v["annuity"]) + (1.57725 * v["fast_track"]) + (-0.04931 * v["oa_count"]) + \
               (0.01102 * v["dep_count"]) + (0.10645 * v["avg_depth"]) + (1.37085 * v["claim_series"]) + \
               (-0.09986 * v["total_cited_by"]) + (0.12839 * v["cited_ref_foreign"]) + (0.00101 * v["cited_vs_filing_gap"]) + \
-              (0.82152 * v["family_country"]) + (0.46585)
+              (0.82152 * v["family_country"]) + (0.78 * v["early_publication"]) + (0.46585)
     else: 
+        # 🚀 화학은 0.14, 그 외(기계, 기구)는 0.78 가중치 적용
+        early_pub_weight = 0.14 if tech_field == "화학" else 0.78
+        
         raw = (0.05667 * v["ipc"]) + (-0.32971 * v["appeal"]) + (0.51385 * v["assignee_change"]) + \
               (0.45075 * v["pledge"]) + (-0.00030 * v["drawing"]) + (-0.00028 * v["indep_word_len"]) + \
               (0.20924 * v["indep_count"]) + (-0.00006 * v["desc_word_len"]) + (0.01125 * v["inventor_count"]) + \
@@ -270,7 +369,7 @@ def calculate_smart_score(claims_info: dict, patent_info: dict, fast_track: int,
               (0.07736 * v["annuity"]) + (1.49230 * v["fast_track"]) + (-0.10205 * v["oa_count"]) + \
               (0.02501 * v["dep_count"]) + (0.13994 * v["avg_depth"]) + (1.89104 * v["claim_series"]) + \
               (-0.09986 * v["total_cited_by"]) + (0.10803 * v["cited_ref_foreign"]) + (0.00083 * v["cited_vs_filing_gap"]) + \
-              (1.54186 * v["family_country"]) + (-0.104374267)
+              (1.54186 * v["family_country"]) + (early_pub_weight * v["early_publication"]) + (-0.104374267)
 
     clamped = max(1, min(9, round(raw)))
     g_map = {9: "AAA", 8: "AA", 7: "A", 6: "BBB", 5: "BB", 4: "B", 3: "CCC", 2: "CC", 1: "C"}
@@ -278,7 +377,7 @@ def calculate_smart_score(claims_info: dict, patent_info: dict, fast_track: int,
     return {"rawScore": round(raw, 4), "roundedScore": clamped, "grade": g_map.get(clamped, "C"), "variables": v}
 
 # ==========================================
-# 4. 룰 검증 (1.2배 구제 룰 포함)
+# 5. 룰 검증 (1.2배 구제 룰 포함)
 # ==========================================
 def validate_rules(claims_info, patent_info, fast_track, oa_count, tech_field, smart_grade, annuity_count):
     indep_std = 4 if tech_field == "전기 전자 IT" else 3
@@ -327,10 +426,22 @@ def validate_rules(claims_info, patent_info, fast_track, oa_count, tech_field, s
 async def analyze_patent(
     pdf: UploadFile = File(None),
     text: str = Form(""),
+    isRegistration: bool = Form(False), # ⭐ 체크박스 값 수신 파라미터 추가
     fastTrack: int = Form(0),
     officeActionCount: int = Form(0),
-    annuityCount: int = Form(0),
-    techField: str = Form("기계")
+    annuityCount: int = Form(1),
+    techField: str = Form("기계"),
+    appealCount: int = Form(0),
+    assigneeChangeCount: int = Form(0),
+    pledgeCount: int = Form(0),
+    divisionalPriorityCount: int = Form(0),
+    familyCountryCount: int = Form(0),
+    licenseeCount: int = Form(0),
+    priorArtForeignCount: int = Form(0),
+    totalCitedByCount: int = Form(0),
+    citedRefForeignCount: int = Form(0),
+    citedVsFilingGap: int = Form(0),
+    earlyPublication: int = Form(0)
 ):
     try:
         full_text = text
@@ -340,9 +451,30 @@ async def analyze_patent(
 
         if not full_text.strip(): return {"error": "텍스트를 추출할 수 없습니다."}
 
-        patent_info = extract_patent_data(full_text)
-        claims_info = parse_claims(full_text)
-        smart_data = calculate_smart_score(claims_info, patent_info, fastTrack, officeActionCount, techField, annuityCount)
+        # ⭐ 파싱 함수에 isRegistration 플래그 전달
+        patent_info = extract_patent_data(full_text, is_registration=isRegistration)
+        claims_info = parse_claims(full_text, is_registration=isRegistration)
+        
+    
+        
+        # UI에서 입력받은 심화 지표들을 patent_info에 강제로 덮어씌움 (calculate_smart_score가 읽을 수 있도록)
+        patent_info["appeal"] = appealCount
+        patent_info["assignee_change"] = assigneeChangeCount
+        patent_info["pledge"] = pledgeCount
+        patent_info["divisional_priority"] = divisionalPriorityCount
+        patent_info["family_country"] = familyCountryCount
+        patent_info["licensee"] = licenseeCount
+        patent_info["prior_art_foreign"] = priorArtForeignCount
+        patent_info["total_cited_by"] = totalCitedByCount
+        patent_info["cited_ref_foreign"] = citedRefForeignCount
+        patent_info["cited_vs_filing_gap"] = citedVsFilingGap
+
+        # ⚠️calculate_smart_score 함수의 변수 매핑(v) 딕셔너리 내부에서 
+        # v["appeal"] = patent_info.get("appeal", 0) 처럼 호출하도록 기존 함수도 연결되어 있어야 합니다.
+        
+        smart_data = calculate_smart_score(
+        claims_info, patent_info, fastTrack, officeActionCount, techField, annuityCount, earlyPublication
+    )
         validation_data = validate_rules(claims_info, patent_info, fastTrack, officeActionCount, techField, smart_data["grade"], annuityCount)
 
         v = smart_data["variables"]
@@ -359,14 +491,19 @@ async def analyze_patent(
             
             {"key": "우선심사청구 여부", "value": v["fast_track"], "status": "사용자입력"},
             {"key": "의견서 제출 수", "value": v["oa_count"], "status": "사용자입력"},
-            {"key": "연차등록 횟수", "value": v["annuity"], "status": "사용자입력(기본1)"},
+            {"key": "연차등록 횟수", "value": v["annuity"], "status": "사용자입력"},
             {"key": "기술분야", "value": techField, "status": "사용자입력"},
 
-            {"key": "거절결정불복심판 수", "value": 0, "status": "미확인(기본0)"},
-            {"key": "권리자 변동 수", "value": 0, "status": "미확인(기본0)"},
-            {"key": "금융기관 질권설정 수", "value": 0, "status": "미확인(기본0)"},
-            {"key": "분할출원·우선권주장수", "value": 0, "status": "미확인(기본0)"},
-            {"key": "해외 패밀리 국가수", "value": 0, "status": "미확인(기본0)"},
+            {"key": "거절결정불복심판 수", "value": appealCount, "status": "사용자입력(기본0)"},
+            {"key": "권리자 변동 수", "value": assigneeChangeCount, "status": "사용자입력(기본0)"},
+            {"key": "금융기관 질권설정 수", "value": pledgeCount, "status": "사용자입력(기본0)"},
+            {"key": "분할출원·우선권주장수", "value": divisionalPriorityCount, "status": "사용자입력(기본0)"},
+            {"key": "해외 패밀리 국가수", "value": familyCountryCount, "status": "사용자입력(기본0)"},
+            {"key": "실시권자 수", "value": licenseeCount, "status": "사용자입력(기본0)"},
+            {"key": "선행문헌 중 논문/외국특허수", "value": priorArtForeignCount, "status": "사용자입력(기본0)"},
+            {"key": "총 피인용 수", "value": totalCitedByCount, "status": "사용자입력(기본0)"},
+            {"key": "피인용의 특허의 인용문헌 중 논문/외국특허수", "value": citedRefForeignCount, "status": "사용자입력(기본0)"},
+            {"key": "피인용과 출원일 차이", "value": citedVsFilingGap, "status": "사용자입력(기본0)"},
         ]
 
         return {
@@ -380,7 +517,7 @@ async def analyze_patent(
         import traceback
         traceback.print_exc()
         return {"error": f"서버 분석 오류: {str(e)}"}
-
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8787)

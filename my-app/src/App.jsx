@@ -2,19 +2,38 @@
 import React, { useRef, useState } from "react";
 
 export default function App() {
-  // 1. 사용자 입력 상태
+  // 1. 사용자 기본 입력 상태
   const [pdfFile, setPdfFile] = useState(null);
   const [textInput, setTextInput] = useState("");
+  // 등록공보 여부 상태 (기본값: false - 출원서류)
+  const [isRegistration, setIsRegistration] = useState(false);
+  
   const [fastTrack, setFastTrack] = useState(1);
   const [officeActionCount, setOfficeActionCount] = useState(0);
-  const [annuityCount, setAnnuityCount] = useState(1); // 연차등록 횟수 (새로 추가됨)
+  const [annuityCount, setAnnuityCount] = useState(1); 
   const [techField, setTechField] = useState("기계");
+
+  // 1-1. 심화 평가 지표 (기본값 0) 상태 추가
+  const [appealCount, setAppealCount] = useState(0);               // 거절결정불복심판 수
+  const [assigneeChangeCount, setAssigneeChangeCount] = useState(0); // 권리자 변동 수
+  const [pledgeCount, setPledgeCount] = useState(0);               // 금융기관 질권설정 수
+  const [divisionalPriorityCount, setDivisionalPriorityCount] = useState(0); // 분할출원/우선권주장수
+  const [familyCountryCount, setFamilyCountryCount] = useState(0);   // 해외 패밀리 국가수
+  const [licenseeCount, setLicenseeCount] = useState(0);             // 실시권자 수
+  const [priorArtForeignCount, setPriorArtForeignCount] = useState(0); // 선행문헌 중 논문/외국특허수
+  const [totalCitedByCount, setTotalCitedByCount] = useState(0);     // 총 피인용 수
+  const [citedRefForeignCount, setCitedRefForeignCount] = useState(0); // 피인용 특허의 인용문헌 중 논문/외국특허수
+  const [citedVsFilingGap, setCitedVsFilingGap] = useState(0);       // 피인용과 출원일 차이
+  
+  // 🚀 [추가] 조기공개 여부 (체크 안 함: 0, 체크 함: 1)
+  const [earlyPublication, setEarlyPublication] = useState(0);
 
   // 2. UI 제어 상태
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
-  const [report, setReport] = useState(null); // 백엔드 결과물
+  const [report, setReport] = useState(null); 
   const [isDragging, setIsDragging] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false); // 심화 지표 토글 상태
   const fileInputRef = useRef(null);
 
   // 3. 접기/펼치기 상태
@@ -31,11 +50,9 @@ export default function App() {
   // ---------------------------
   function onPickFile(e) {
     const f = e.target.files?.[0];
-    if (f) {
-      if (!f.name.toLowerCase().endsWith('.pdf') && !f.name.toLowerCase().endsWith('.docx')) {
-        setErrorMsg('PDF 또는 DOCX 파일만 업로드할 수 있습니다.');
-        return;
-      }
+    if (f && !f.name.toLowerCase().endsWith('.pdf') && !f.name.toLowerCase().endsWith('.docx')) {
+      setErrorMsg('PDF 또는 DOCX 파일만 업로드할 수 있습니다.');
+      return;
     }
     setPdfFile(f || null);
     setErrorMsg("");
@@ -46,10 +63,8 @@ export default function App() {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-
     const f = e.dataTransfer?.files?.[0];
     if (!f) return;
-
     if (!f.name.toLowerCase().endsWith('.pdf') && !f.name.toLowerCase().endsWith('.docx')) {
       setErrorMsg("PDF 또는 DOCX 파일만 업로드할 수 있습니다.");
       return;
@@ -63,7 +78,7 @@ export default function App() {
   function onDragLeave(e) { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }
 
   // ---------------------------
-  // 🚀 서버 통신 (API Fetch)
+  // 서버 통신 (API Fetch)
   // ---------------------------
   async function onAnalyze() {
     setErrorMsg("");
@@ -80,13 +95,27 @@ export default function App() {
       if (pdfFile) form.append("pdf", pdfFile);
       if (textInput) form.append("text", textInput);
       
-      // 입력값 전송 (연차 추가)
+      form.append("isRegistration", isRegistration);
       form.append("fastTrack", String(fastTrack));
       form.append("officeActionCount", String(officeActionCount));
       form.append("annuityCount", String(annuityCount)); 
       form.append("techField", techField);
 
-      // 백엔드 API (main.py) 호출
+      // 심화 입력값들을 FormData에 추가 전송
+      form.append("appealCount", String(appealCount));
+      form.append("assigneeChangeCount", String(assigneeChangeCount));
+      form.append("pledgeCount", String(pledgeCount));
+      form.append("divisionalPriorityCount", String(divisionalPriorityCount));
+      form.append("familyCountryCount", String(familyCountryCount));
+      form.append("licenseeCount", String(licenseeCount));
+      form.append("priorArtForeignCount", String(priorArtForeignCount));
+      form.append("totalCitedByCount", String(totalCitedByCount));
+      form.append("citedRefForeignCount", String(citedRefForeignCount));
+      form.append("citedVsFilingGap", String(citedVsFilingGap));
+      
+      // 🚀 [추가] 조기공개여부 전송
+      form.append("earlyPublication", String(earlyPublication));
+
       const res = await fetch("/api/analyze", { method: "POST", body: form });
       
       if (!res.ok) {
@@ -97,7 +126,7 @@ export default function App() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      setReport(data); // 데이터 장착 완료!
+      setReport(data);
 
     } catch (e) {
       setErrorMsg(String(e?.message || e));
@@ -126,7 +155,9 @@ export default function App() {
     label: { fontSize: 12, color: "#374151", fontWeight: 600 },
     help: { fontSize: 12, color: "#6b7280", lineHeight: 1.5, marginTop: 10, whiteSpace: "pre-line" },
     inputNum: { width: 60, padding: "8px", border: "1px solid #e5e7eb", borderRadius: 6, textAlign: "center" },
+    inputFull: { width: "100%", padding: "8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, boxSizing: "border-box" },
     btn: { border: "1px solid #2563eb", background: "#3b82f6", color: "#fff", borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", minHeight: 40 },
+    btnGhost: { background: "none", border: "1px solid #d1d5db", color: "#4b5563", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "inline-block" },
     btnDisabled: { opacity: 0.6, cursor: "not-allowed" },
     warn: { border: "1px solid #fecaca", background: "#fff1f2", color: "#991b1b", padding: "10px 12px", borderRadius: 10, fontSize: 13, marginTop: 12, whiteSpace: "pre-wrap" },
     ok: { border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#166534", padding: "10px 12px", borderRadius: 10, fontSize: 13, marginTop: 12, textAlign: 'center', fontWeight: 600 },
@@ -141,9 +172,6 @@ export default function App() {
     },
   };
 
-  // ---------------------------
-  // 뷰 매핑 (백엔드 데이터 구조 분해)
-  // ---------------------------
   const basic = report?.basic || {};
   const claims = report?.claims || {};
   const claimRows = claims?.rows || [];
@@ -169,7 +197,7 @@ export default function App() {
         <div style={styles.grid}>
           {/* ===================== [입력 영역] ===================== */}
           <div style={styles.card}>
-            <h2 style={styles.cardTitle} style={{...styles.cardTitle, marginBottom: 16}}>🔍 분석 데이터 입력</h2>
+            <h2 style={{...styles.cardTitle, marginBottom: 16}}>🔍 분석 데이터 입력</h2>
             
             <div style={styles.field}>
               <div style={styles.label}>1. 명세서 / 공보 파일 업로드 (또는 텍스트 입력)</div>
@@ -198,25 +226,36 @@ export default function App() {
                   style={{ height: 200, padding: 16, border: '2px solid #e5e7eb', borderRadius: 10, resize: 'none', fontSize: 13 }}
                 />
               </div>
+
+              {/* 문서 포맷 선택 (라디오 버튼) */}
+              <div style={{ display: 'flex', gap: 20, marginTop: 12, padding: "12px 16px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                <div style={styles.label}>문서 포맷:</div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input type="radio" checked={!isRegistration} onChange={() => setIsRegistration(false)} />
+                  <span style={{ fontSize: 14 }}>출원서류</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input type="radio" checked={isRegistration} onChange={() => setIsRegistration(true)} />
+                  <span style={{ fontSize: 14 }}>등록 / 공개 특허공보</span>
+                </label>
+              </div>
             </div>
 
             <div style={{ height: 24 }} />
             
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
-              {/* 기술분야 */}
               <div style={styles.field}>
                 <div style={styles.label}>2. 기술분야 선택</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
                   {['기계', '전기 전자 IT', '기구', '화학'].map(field => (
                     <label key={field} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                       <input type="radio" value={field} checked={techField === field} onChange={(e) => setTechField(e.target.value)} />
-                      <span style={{ fontSize: 14 }}>{field} {field === '전기 전자 IT' && <span style={{fontSize: 11, color: '#ef4444'}}>(가중치 높음)</span>}</span>
+                      <span style={{ fontSize: 14 }}>{field}</span>
                     </label>
                   ))}
                 </div>
               </div>
 
-              {/* 추가 옵션 */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                 <div style={styles.field}>
                   <div style={styles.label}>3. 우선심사 청구 여부</div>
@@ -245,7 +284,6 @@ export default function App() {
                 </div>
               </div>
               
-              {/* 연차등록 (룰 검증용) */}
               <div style={styles.field}>
                 <div style={styles.label}>5. 연차등록 횟수 (등록 특허인 경우)</div>
                 <div style={{ marginTop: 4, fontSize: 13, color: '#4b5563' }}>
@@ -254,6 +292,47 @@ export default function App() {
                 <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>* 1년 이하일 때만 BBB 룰 검증을 수행합니다.</div>
               </div>
             </div>
+
+            <div style={{ marginTop: 20 }}>
+              <button onClick={() => setShowAdvanced(!showAdvanced)} style={styles.btnGhost}>
+                {showAdvanced ? "▲ 상세 평가 지표 직접 입력 닫기" : "▼ 상세 평가 지표 직접 입력 열기 (기본값 0)"}
+              </button>
+            </div>
+
+            {/* 심화 지표 입력 그리드 */}
+            {showAdvanced && (
+              <div style={{ marginTop: 16, padding: 20, background: "#f8fafc", borderRadius: 10, border: "1px solid #e2e8f0" }}>
+                <div style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>
+                  미확인되어 서버가 '0'으로 간주하는 항목들입니다. 정확한 값이 있다면 직접 숫자를 입력해주세요.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16 }}>
+                  
+                  {/* 🚀 [추가] 조기공개 여부 체크박스 (볼드체 강조) */}
+                  <div style={{ ...styles.field, justifyContent: 'center', padding: '8px 0' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input 
+                        type="checkbox" 
+                        checked={earlyPublication === 1} 
+                        onChange={(e) => setEarlyPublication(e.target.checked ? 1 : 0)} 
+                        style={{ width: 18, height: 18, cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: 14, fontWeight: 'bold', color: '#111827' }}>조기공개 여부</span>
+                    </label>
+                  </div>
+
+                  <div style={styles.field}><div style={styles.label}>거절결정불복심판 수</div><input type="number" min="0" value={appealCount} onChange={(e) => setAppealCount(Number(e.target.value))} style={styles.inputFull} /></div>
+                  <div style={styles.field}><div style={styles.label}>권리자 변동 수</div><input type="number" min="0" value={assigneeChangeCount} onChange={(e) => setAssigneeChangeCount(Number(e.target.value))} style={styles.inputFull} /></div>
+                  <div style={styles.field}><div style={styles.label}>금융기관 질권설정 수</div><input type="number" min="0" value={pledgeCount} onChange={(e) => setPledgeCount(Number(e.target.value))} style={styles.inputFull} /></div>
+                  <div style={styles.field}><div style={styles.label}>분할출원/우선권주장수</div><input type="number" min="0" value={divisionalPriorityCount} onChange={(e) => setDivisionalPriorityCount(Number(e.target.value))} style={styles.inputFull} /></div>
+                  <div style={styles.field}><div style={styles.label}>해외 패밀리 국가수</div><input type="number" min="0" value={familyCountryCount} onChange={(e) => setFamilyCountryCount(Number(e.target.value))} style={styles.inputFull} /></div>
+                  <div style={styles.field}><div style={styles.label}>실시권자 수</div><input type="number" min="0" value={licenseeCount} onChange={(e) => setLicenseeCount(Number(e.target.value))} style={styles.inputFull} /></div>
+                  <div style={styles.field}><div style={styles.label}>선행문헌 중 논문/외국특허수</div><input type="number" min="0" value={priorArtForeignCount} onChange={(e) => setPriorArtForeignCount(Number(e.target.value))} style={styles.inputFull} /></div>
+                  <div style={styles.field}><div style={styles.label}>총 피인용 수</div><input type="number" min="0" value={totalCitedByCount} onChange={(e) => setTotalCitedByCount(Number(e.target.value))} style={styles.inputFull} /></div>
+                  <div style={styles.field}><div style={styles.label}>피인용의 특허의 인용문헌 중 논문/외국특허수</div><input type="number" min="0" value={citedRefForeignCount} onChange={(e) => setCitedRefForeignCount(Number(e.target.value))} style={styles.inputFull} /></div>
+                  <div style={styles.field}><div style={styles.label}>피인용과 출원일 차이(년)</div><input type="number" min="0" value={citedVsFilingGap} onChange={(e) => setCitedVsFilingGap(Number(e.target.value))} style={styles.inputFull} /></div>
+                </div>
+              </div>
+            )}
 
             <div style={{ textAlign: 'center', marginTop: 32 }}>
               <button style={{ ...styles.btn, fontSize: 16, padding: '16px 48px', width: '100%', maxWidth: 400 }} onClick={onAnalyze} disabled={loading}>
@@ -345,7 +424,7 @@ export default function App() {
                         <tr key={i}>
                           <td style={styles.td}>{r.key}</td>
                           <td style={styles.td}><b>{r.value}</b></td>
-                          <td style={{...styles.td, color: r.status.includes('자동') ? '#16a34a' : '#6b7280'}}>{r.status}</td>
+                          <td style={{...styles.td, color: r.status.includes('자동') ? '#16a34a' : (r.status.includes('입력') ? '#3b82f6' : '#6b7280')}}>{r.status}</td>
                         </tr>
                       ))}
                     </tbody>
