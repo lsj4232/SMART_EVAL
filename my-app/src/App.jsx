@@ -223,7 +223,7 @@ export default function App() {
                 </div>
                 <textarea
                   value={textInput} onChange={(e) => setTextInput(e.target.value)} placeholder="문서 텍스트 복사 붙여넣기..."
-                  style={{ height: 200, padding: 16, border: '2px solid #e5e7eb', borderRadius: 10, resize: 'none', fontSize: 13 }}
+                  style={{ height: 200, padding: 16, border: '2px solid #e5e7eb', borderRadius: 10, resize: 'none', fontSize: 13, fontFamily: 'inherit' }}
                 />
               </div>
 

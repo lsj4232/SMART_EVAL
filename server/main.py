@@ -57,12 +57,38 @@ def extract_patent_data(text: str, is_registration: bool = False) -> dict:
             raw_title = re.split(r'\(\s*57\s*\)\s*요\s*약?|심\s*사\s*관\s*:', raw_title)[0]
             data["inventionTitle"] = re.sub(r'\s+', ' ', raw_title).strip()
 
-        inv_block = re.search(r'\(\s*72\s*\)\s*발\s*명\s*자([\s\S]*?)(?:\(\s*74\s*\)|\(\s*54\s*\)|$)', text)
-        if inv_block:
-            names = re.findall(r'(?m)^\s*([가-힣]{2,5})\s*$', inv_block.group(1))
+# 🚀 [수정 1] 탐색 중지 조건에 '이 발명을 지원한'을 추가하여 국가연구개발사업 블록 원천 차단
+        inv_blocks = re.findall(r'\(\s*72\s*\)\s*발\s*명\s*자([\s\S]*?)(?=\(\s*\d{2}\s*\)|명\s*세\s*서|청\s*구\s*범\s*위|이\s*발\s*명\s*을\s*지\s*원\s*한|$)', text)
+        
+        if inv_blocks:
+            combined_inv_text = "\n".join(inv_blocks)
+            
+            # 한글, 영문, 공백, 마침표(.), 하이픈(-)으로만 구성된 줄을 이름으로 1차 인식
+            raw_names = re.findall(r'(?m)^\s*([가-힣A-Za-z][가-힣A-Za-z\s\.\-]{1,40})\s*$', combined_inv_text)
+            
+            names = []
+            stop_words = [
+                '요약', '도면', '계속', '발명자', '심사관', '대리인', 
+                '청구범위', '명세서', '특허청구의', '대표도', '공개특허', '등록특허'
+            ]
+            
+            for raw_name in raw_names:
+                name = raw_name.strip()
+                # 중복 방지 및 목차/시스템 단어 차단
+                if name and name not in names and name not in stop_words:
+                    # 주소가 우연히 이름으로 인식되는 것을 방지 ('시 ', '구 ' 등이 포함된 긴 문자열 배제)
+                    if len(name.split()) >= 3 and any(kw in name for kw in ['광역시', '특별시', '도 ', '시 ', '구 ', '로 ']):
+                        continue
+                        
+                    # 🚀 [수정 2] 혹시라도 빨려 들어온 국가연구개발사업 관련 단어들(부처명, 사업명 등) 강력 배제
+                    if any(kw in name for kw in ['연구사업', '과제수행', '부처명', '과제명', '연구과제', '국가연구개발', '사업명', '기관명']):
+                        continue
+                        
+                    names.append(name)
+                    
             if names:
                 data["inventors"] = ", ".join(names)
-                data["inventorCount"] = len(names)
+                data["inventorCount"] = len(names) 
     else:
         # [출원서류 모드] (기존 XML/Word 포맷)
         app_no = re.search(r'(?:출\s*원\s*번\s*호|application\s*no)[^\d]*([0-9]{2,4}[-\s]?[0-9]{4}[-\s]?[0-9]{7,8})', text, re.IGNORECASE)
