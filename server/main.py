@@ -361,10 +361,6 @@ def parse_claims(text: str, is_registration: bool = False):
 # ==========================================
 # 4. SMART 산식 및 가중치 계산 모듈
 # ==========================================
-# ==========================================
-# 4. SMART 산식 및 가중치 계산 모듈
-# ==========================================
-# 🚀 파라미터에 early_publication (조기공개여부) 추가 (기본값 0)
 def calculate_smart_score(claims_info: dict, patent_info: dict, fast_track: int, oa_count: int, tech_field: str, annuity_count: int, early_publication: int = 0):
     v = {
         "ipc": patent_info.get("ipcCount", 1),
@@ -389,11 +385,10 @@ def calculate_smart_score(claims_info: dict, patent_info: dict, fast_track: int,
         "fast_track": fast_track,
         "oa_count": oa_count,
         "annuity": annuity_count if annuity_count > 0 else 1,
-        "early_publication": early_publication # 🚀 새로 추가된 변수 매핑
+        "early_publication": early_publication
     }
 
     if tech_field == "전기 전자 IT":
-        # 전기 전자 IT는 0.78 가중치 적용
         raw = (0.06816 * v["ipc"]) + (-0.63435 * v["appeal"]) + (1.02710 * v["assignee_change"]) + \
               (0.87428 * v["pledge"]) + (-0.01293 * v["drawing"]) + (-0.00015 * v["indep_word_len"]) + \
               (0.10874 * v["indep_count"]) + (-0.00000 * v["desc_word_len"]) + (-0.02668 * v["inventor_count"]) + \
@@ -402,10 +397,11 @@ def calculate_smart_score(claims_info: dict, patent_info: dict, fast_track: int,
               (0.01102 * v["dep_count"]) + (0.10645 * v["avg_depth"]) + (1.37085 * v["claim_series"]) + \
               (-0.09986 * v["total_cited_by"]) + (0.12839 * v["cited_ref_foreign"]) + (0.00101 * v["cited_vs_filing_gap"]) + \
               (0.82152 * v["family_country"]) + (0.78 * v["early_publication"]) + (0.46585)
-    else: 
-        # 🚀 화학은 0.14, 그 외(기계, 기구)는 0.78 가중치 적용
-        early_pub_weight = 0.14 if tech_field == "화학" else 0.78
         
+        # 🚀 [요청 1 반영] 전기전자IT 분야는 반올림하지 않고 버림(int) 처리
+        clamped = max(1, min(9, int(raw)))
+    else: 
+        early_pub_weight = 0.14 if tech_field == "화학" else 0.78
         raw = (0.05667 * v["ipc"]) + (-0.32971 * v["appeal"]) + (0.51385 * v["assignee_change"]) + \
               (0.45075 * v["pledge"]) + (-0.00030 * v["drawing"]) + (-0.00028 * v["indep_word_len"]) + \
               (0.20924 * v["indep_count"]) + (-0.00006 * v["desc_word_len"]) + (0.01125 * v["inventor_count"]) + \
@@ -415,16 +411,20 @@ def calculate_smart_score(claims_info: dict, patent_info: dict, fast_track: int,
               (-0.09986 * v["total_cited_by"]) + (0.10803 * v["cited_ref_foreign"]) + (0.00083 * v["cited_vs_filing_gap"]) + \
               (1.54186 * v["family_country"]) + (early_pub_weight * v["early_publication"]) + (-0.104374267)
 
-    clamped = max(1, min(9, round(raw)))
+        # 기존 방식: 반올림(round) 적용
+        clamped = max(1, min(9, round(raw)))
+
     g_map = {9: "AAA", 8: "AA", 7: "A", 6: "BBB", 5: "BB", 4: "B", 3: "CCC", 2: "CC", 1: "C"}
     
     return {"rawScore": round(raw, 4), "roundedScore": clamped, "grade": g_map.get(clamped, "C"), "variables": v}
 
 # ==========================================
-# 5. 룰 검증 (1.2배 구제 룰 포함)
+# 5. 룰 검증 (구제 룰 포함)
 # ==========================================
 def validate_rules(claims_info, patent_info, fast_track, oa_count, tech_field, smart_grade, annuity_count):
-    indep_std = 4 if tech_field == "전기 전자 IT" else 3
+    # 🚀 [요청 2 반영] 전기전자IT 분야 독립항수 기준치를 5로 수정
+    indep_std = 5 if tech_field == "전기 전자 IT" else 3
+    
     indep = claims_info["independentCount"]
     dep = claims_info["dependentCount"]
     series = claims_info["claimSeries"]
@@ -448,12 +448,16 @@ def validate_rules(claims_info, patent_info, fast_track, oa_count, tech_field, s
     if annuity_count <= 1:
         top_ok = all(r["pass"] for r in rows if r["level"] == "상")
         mid_pass_count = sum(1 for r in rows if r["level"] == "중" and r["pass"])
+        
         if top_ok:
-            if mid_pass_count == 2: bbb_predict = True
+            # 상 조건(독립항수 포함)이 모두 통과되었을 때
+            if mid_pass_count == 2: 
+                bbb_predict = True
             elif mid_pass_count == 1:
-                mid_pass = [r for r in rows if r["level"] == "중" and r["pass"]][0]
-                std = 7 if "종속항 수" in mid_pass["item"] else 2.3
-                if float(mid_pass["value"]) >= std * 1.2: bbb_predict = True
+                # 🚀 [요청 3 반영] 상 조건이 모두 통과되었다면(=독립항수가 기준치 이상이면)
+                # 중 항목에서 1개가 부족하더라도 1.2배 달성 여부와 무관하게 무조건 구제
+                if indep >= indep_std:
+                    bbb_predict = True
 
     grade6 = "BBB" if bbb_predict else "BB"
     score_map = {"AAA":9, "AA":8, "A":7, "BBB":6, "BB":5, "B":4, "CCC":3, "CC":2, "C":1}
