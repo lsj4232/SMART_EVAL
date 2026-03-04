@@ -57,35 +57,53 @@ def extract_patent_data(text: str, is_registration: bool = False) -> dict:
             raw_title = re.split(r'\(\s*57\s*\)\s*요\s*약?|심\s*사\s*관\s*:', raw_title)[0]
             data["inventionTitle"] = re.sub(r'\s+', ' ', raw_title).strip()
 
-# 🚀 [수정 1] 탐색 중지 조건에 '이 발명을 지원한'을 추가하여 국가연구개발사업 블록 원천 차단
+# 🚀 [수정] 괄호 텍스트 병합 현상 방지 및 숫자가 없는 주소지(예: 대전광역시 서구) 완벽 차단
         inv_blocks = re.findall(r'\(\s*72\s*\)\s*발\s*명\s*자([\s\S]*?)(?=\(\s*\d{2}\s*\)|명\s*세\s*서|청\s*구\s*범\s*위|이\s*발\s*명\s*을\s*지\s*원\s*한|$)', text)
         
         if inv_blocks:
             combined_inv_text = "\n".join(inv_blocks)
             
-            # 한글, 영문, 공백, 마침표(.), 하이픈(-)으로만 구성된 줄을 이름으로 1차 인식
-            raw_names = re.findall(r'(?m)^\s*([가-힣A-Za-z][가-힣A-Za-z\s\.\-]{1,40})\s*$', combined_inv_text)
+            # 1. 괄호 뒤에 이름이 바짝 붙어 추출되는 PDF 오류를 방지하기 위해 괄호 뒤에 줄바꿈 강제 삽입
+            clean_text = combined_inv_text.replace(')', ')\n')
+            
+            # 2. 줄 단위로 분리하여 한 줄씩 검사
+            lines = clean_text.split('\n')
             
             names = []
             stop_words = [
                 '요약', '도면', '계속', '발명자', '심사관', '대리인', 
-                '청구범위', '명세서', '특허청구의', '대표도', '공개특허', '등록특허'
+                '청구범위', '명세서', '특허청구의', '대표도', '공개특허', '등록특허', '뒷면에'
             ]
+            # 확실한 주소 및 과제 키워드
+            address_keywords = ['광역시', '특별시', '도 ', '시 ', '구 ', '로 ', '길 ', '동 ', '번지', '아파트', '대학교', '산학협력단']
+            project_keywords = ['연구사업', '과제수행', '부처명', '과제명', '연구과제', '국가연구개발', '사업명', '기관명', '출원인']
             
-            for raw_name in raw_names:
-                name = raw_name.strip()
-                # 중복 방지 및 목차/시스템 단어 차단
-                if name and name not in names and name not in stop_words:
-                    # 주소가 우연히 이름으로 인식되는 것을 방지 ('시 ', '구 ' 등이 포함된 긴 문자열 배제)
-                    if len(name.split()) >= 3 and any(kw in name for kw in ['광역시', '특별시', '도 ', '시 ', '구 ', '로 ']):
-                        continue
-                        
-                    # 🚀 [수정 2] 혹시라도 빨려 들어온 국가연구개발사업 관련 단어들(부처명, 사업명 등) 강력 배제
-                    if any(kw in name for kw in ['연구사업', '과제수행', '부처명', '과제명', '연구과제', '국가연구개발', '사업명', '기관명']):
-                        continue
-                        
-                    names.append(name)
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
                     
+                # 3. 주소의 특징(숫자나 괄호)이 포함된 줄은 무조건 배제 (사람 이름엔 숫자/괄호가 없음)
+                if re.search(r'[\d\(\)]', line):
+                    continue
+                    
+                # 4. 노이즈 단어 및 과제 정보 스킵
+                if any(sw in line for sw in stop_words) or any(kw in line for kw in project_keywords):
+                    continue
+                    
+                # 5. 숫자가 없는 짧은 주소지 줄 스킵 ("대전광역시 서구" 등)
+                if any(kw in line for kw in address_keywords):
+                    continue
+                    
+                # 6. 남은 문자열이 순수 한글, 영문, 공백, 마침표, 하이픈, 쉼표로만 구성된 경우 이름으로 최종 판별
+                if re.match(r'^[가-힣A-Za-z\s\.\-\,]+$', line):
+                    # 혹시 쉼표로 여러 명이 한 줄에 있을 경우를 대비해 분리
+                    for part in line.split(','):
+                        name = part.strip()
+                        # 이름 길이 필터 (너무 짧거나 너무 긴 문자열의 오작동 방지)
+                        if 2 <= len(name) <= 40 and name not in names:
+                            names.append(name)
+                            
             if names:
                 data["inventors"] = ", ".join(names)
                 data["inventorCount"] = len(names) 
