@@ -36,9 +36,9 @@ export default function App() {
   const [showAdvanced, setShowAdvanced] = useState(false); // 심화 지표 토글 상태
   const fileInputRef = useRef(null);
 
-  // 3. 접기/펼치기 상태
+  // 3. 접기/펼치기 상태 (finalGrade 추가)
   const [collapsed, setCollapsed] = useState({
-    basic: false, claims: false, inputs: false, smart: false, validation: false
+    basic: false, claims: false, inputs: false, smart: false, validation: false, finalGrade: false
   });
 
   const toggleCollapse = (key) => {
@@ -447,20 +447,21 @@ export default function App() {
                     <div style={{ fontSize: 32, fontWeight: 800, color: "#0f172a" }}>{smart.roundedScore} 점</div>
                   </div>
                   <div style={{ padding: 20, background: "#eff6ff", borderRadius: 12, textAlign: "center", border: "2px solid #bfdbfe" }}>
-                    <div style={{ fontSize: 13, color: "#3b82f6", marginBottom: 8, fontWeight: 600 }}>1차 산출 등급</div>
+                    <div style={{ fontSize: 13, color: "#3b82f6", marginBottom: 8, fontWeight: 600 }}>산식 기반 산출 등급</div>
                     <div style={{ fontSize: 36, fontWeight: 900, color: "#1d4ed8" }}>{smart.grade}</div>
                   </div>
                 </div>
               </div>
 
-              {/* 5. 룰 기반 검증 및 최종 결론 */}
+              {/* 5. 룰 기반 주요 요소 검증표 */}
               <div style={styles.card}>
                 <div style={styles.cardHeader}>
-                  <h2 style={styles.cardTitle}>5️⃣ 주요 요소 검증표 및 보수적 최종 등급</h2>
+                  <h2 style={styles.cardTitle}>5️⃣ 주요 요소 검증표</h2>
                   <button onClick={() => toggleCollapse('validation')} style={styles.collapseBtn}>{collapsed.validation ? '▼ 펼치기' : '▲ 접기'}</button>
                 </div>
                 {!collapsed.validation && (
                   <>
+                    {/* 👇 원래 있던 주요 요소 검증표 (복구) 👇 */}
                     <table style={styles.table}>
                       <thead>
                         <tr><th style={styles.th}>중요도</th><th style={styles.th}>항목</th><th style={styles.th}>목표 기준치</th><th style={styles.th}>실제 값</th><th style={styles.th}>충족 여부</th></tr>
@@ -479,21 +480,56 @@ export default function App() {
                     </table>
                     
                     <div style={styles.help}>
-                      * 중요도 [상] 3개 필수 충족 및 [중] 2개 충족 시 BBB 이상 부여. (단, [중] 1개 실패 시, 다른 [중] 항목이 목표치의 1.2배 달성 시 구제됨)<br/>
+                      * 중요도 [상] 3개 필수 충족 및 [중] 2개 충족 시 BBB 이상 부여. <br />(단, [중] 1개 실패 시, 다른 [중] 항목이 목표치의 1.2배를 달성하거나, 독립항수가 기준치 이상이면, 중요도 [중]에서 어느 하나가 부족하더라도 구제됨)<br/>
                       * 위 검증 룰은 <b>연차등록 1년 이하</b> 특허에만 적용됩니다. (현재 설정: {annuityCount}년차)
                     </div>
 
-                    <div style={{ marginTop: 24, padding: 24, background: "#fff7ed", borderRadius: 12, border: "2px solid #fdba74", display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontSize: 13, color: "#c2410c", fontWeight: 700, marginBottom: 4 }}>RULE 검증 (1.2배 구제 포함) 예측치: {validation.bbbOrAbove ? "BBB 이상" : "BBB 미만"}</div>
-                        <div style={{ fontSize: 18, color: "#9a3412", fontWeight: 800 }}>최종 보수적 예측 등급 결재</div>
-                        <div style={{ fontSize: 12, color: "#ea580c", marginTop: 4 }}>산식 등급({smart.grade})과 검증 예측을 비교하여 가장 낮은(엄격한) 등급을 채택했습니다.</div>
-                      </div>
-                      <div style={{ fontSize: 48, fontWeight: 900, color: "#ea580c", textShadow: "2px 2px 0px #ffedd5" }}>
-                        {validation.conservativeGrade}
-                      </div>
-                    </div>
+                    {/* 👇 새로 추가한 종합평가 요약 테이블 👇 */}
+                    {validation.summaryTable && (
+                      <table style={{ ...styles.table, marginTop: 24, border: '2px solid #e5e7eb' }}>
+                        <thead>
+                          <tr style={{ background: '#f8fafc' }}>
+                            <th style={{...styles.th, textAlign: 'center', fontSize: 13, borderRight: '1px solid #e5e7eb'}}>검증요건 전항 부합 여부</th>
+                            <th style={{...styles.th, textAlign: 'center', fontSize: 13, borderRight: '1px solid #e5e7eb'}}>FAIL 구제 가능 여부</th>
+                            <th style={{...styles.th, textAlign: 'center', fontSize: 13}}>종합평가</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td style={{...styles.td, textAlign: 'center', fontSize: 15, fontWeight: 'bold', borderRight: '1px solid #f3f4f6', color: validation.summaryTable.allPassed === 'O' ? '#16a34a' : '#ef4444'}}>
+                              {validation.summaryTable.allPassed}
+                            </td>
+                            <td style={{...styles.td, textAlign: 'center', fontSize: 15, fontWeight: 'bold', borderRight: '1px solid #f3f4f6', color: validation.summaryTable.rescuePossible === 'O' ? '#16a34a' : '#ef4444'}}>
+                              {validation.summaryTable.rescuePossible}
+                            </td>
+                            <td style={{...styles.td, textAlign: 'center', fontSize: 15, fontWeight: 'bold', color: validation.summaryTable.overall === 'BBB 이상' ? '#1d4ed8' : '#ef4444'}}>
+                              {validation.summaryTable.overall}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    )}
                   </>
+                )}
+              </div>
+
+              {/* 6. 최종 결론 */}
+              <div style={styles.card}>
+                <div style={styles.cardHeader}>
+                  <h2 style={styles.cardTitle}>6️⃣ 보수적 최종 등급</h2>
+                  <button onClick={() => toggleCollapse('finalGrade')} style={styles.collapseBtn}>{collapsed.finalGrade ? '▼ 펼치기' : '▲ 접기'}</button>
+                </div>
+                {!collapsed.finalGrade && (
+                  <div style={{ padding: 24, background: "#fff7ed", borderRadius: 12, border: "2px solid #fdba74", display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: 13, color: "#c2410c", fontWeight: 700, marginBottom: 4 }}>1. 산식 기반 산출 등급: {report?.smart?.grade} / 2. 요소 검증 기반 등급: {validation.bbbOrAbove ? "BBB 이상" : "BBB 미만"}</div>
+                      <div style={{ fontSize: 18, color: "#9a3412", fontWeight: 800 }}>최종 보수적 예측 등급 </div>
+                      <div style={{ fontSize: 12, color: "#ea580c", marginTop: 4 }}>산식 등급({smart.grade})과 요소 기반 등급({validation.bbbOrAbove ? "BBB 이상" : "BBB 미만"})을 비교하여 가장 낮은(엄격한) 등급을 채택했습니다.</div>
+                    </div>
+                    <div style={{ fontSize: 48, fontWeight: 900, color: "#ea580c", textShadow: "2px 2px 0px #ffedd5" }}>
+                      {validation.conservativeGrade}
+                    </div>
+                  </div>
                 )}
               </div>
 

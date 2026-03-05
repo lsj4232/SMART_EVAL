@@ -445,6 +445,10 @@ def validate_rules(claims_info, patent_info, fast_track, oa_count, tech_field, s
 
     bbb_predict = False
     
+    # ⭐ 요약 테이블용 상태 변수 추가
+    all_passed = False       
+    rescue_possible = False  
+    
     if annuity_count <= 1:
         top_ok = all(r["pass"] for r in rows if r["level"] == "상")
         mid_pass_count = sum(1 for r in rows if r["level"] == "중" and r["pass"])
@@ -453,11 +457,13 @@ def validate_rules(claims_info, patent_info, fast_track, oa_count, tech_field, s
             # 상 조건(독립항수 포함)이 모두 통과되었을 때
             if mid_pass_count == 2: 
                 bbb_predict = True
+                all_passed = True  # ⭐ 정상적으로 전항 부합함
             elif mid_pass_count == 1:
                 # 🚀 [요청 3 반영] 상 조건이 모두 통과되었다면(=독립항수가 기준치 이상이면)
                 # 중 항목에서 1개가 부족하더라도 1.2배 달성 여부와 무관하게 무조건 구제
                 if indep >= indep_std:
                     bbb_predict = True
+                    rescue_possible = True # ⭐ 구제 룰이 적용됨
 
     grade6 = "BBB" if bbb_predict else "BB"
     score_map = {"AAA":9, "AA":8, "A":7, "BBB":6, "BB":5, "B":4, "CCC":3, "CC":2, "C":1}
@@ -465,7 +471,17 @@ def validate_rules(claims_info, patent_info, fast_track, oa_count, tech_field, s
     s5, s6 = score_map.get(smart_grade, 0), score_map.get(grade6, 0)
     final_grade = smart_grade if s5 <= s6 else grade6
 
-    return {"rows": rows, "bbbOrAbove": bbb_predict, "conservativeGrade": final_grade}
+    # ⭐ 리턴 값에 summaryTable 데이터를 추가하여 프론트로 전달
+    return {
+        "rows": rows, 
+        "bbbOrAbove": bbb_predict, 
+        "conservativeGrade": final_grade,
+        "summaryTable": {
+            "allPassed": "O" if all_passed else "X",
+            "rescuePossible": "O" if rescue_possible else "X",
+            "overall": "BBB 이상" if bbb_predict else "BBB 미만"
+        }
+    }
 
 # ==========================================
 # 🚀 메인 API 라우터
@@ -557,7 +573,7 @@ async def analyze_patent(
         return {
             "basic": patent_info, 
             "claims": claims_info, 
-            "inputsTable": inputs,
+            "inputsTable": inputs,s
             "smart": smart_data, 
             "validation": validation_data
         }
