@@ -573,7 +573,7 @@ async def analyze_patent(
         return {
             "basic": patent_info, 
             "claims": claims_info, 
-            "inputsTable": inputs,s
+            "inputsTable": inputs,
             "smart": smart_data, 
             "validation": validation_data
         }
