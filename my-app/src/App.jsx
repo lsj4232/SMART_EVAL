@@ -489,7 +489,7 @@ export default function App() {
                       <table style={{ ...styles.table, marginTop: 24, border: '2px solid #e5e7eb' }}>
                         <thead>
                           <tr style={{ background: '#f8fafc' }}>
-                            <th style={{...styles.th, textAlign: 'center', fontSize: 13, borderRight: '1px solid #e5e7eb'}}>검증요건 전항 부합 여부</th>
+                            <th style={{...styles.th, textAlign: 'center', fontSize: 13, borderRight: '1px solid #e5e7eb'}}>검증요건 전항목 부합 여부</th>
                             <th style={{...styles.th, textAlign: 'center', fontSize: 13, borderRight: '1px solid #e5e7eb'}}>FAIL 구제 가능 여부</th>
                             <th style={{...styles.th, textAlign: 'center', fontSize: 13}}>종합평가</th>
                           </tr>
@@ -499,9 +499,21 @@ export default function App() {
                             <td style={{...styles.td, textAlign: 'center', fontSize: 15, fontWeight: 'bold', borderRight: '1px solid #f3f4f6', color: validation.summaryTable.allPassed === 'O' ? '#16a34a' : '#ef4444'}}>
                               {validation.summaryTable.allPassed}
                             </td>
-                            <td style={{...styles.td, textAlign: 'center', fontSize: 15, fontWeight: 'bold', borderRight: '1px solid #f3f4f6', color: validation.summaryTable.rescuePossible === 'O' ? '#16a34a' : '#ef4444'}}>
-                              {validation.summaryTable.rescuePossible}
+                            {/* 수정된 부분 시작 */}
+                            <td style={{
+                              ...styles.td, 
+                              textAlign: 'center', 
+                              fontSize: 15, 
+                              fontWeight: 'bold', 
+                              borderRight: '1px solid #f3f4f6', 
+                              // 'O'면 녹색, 'X'나 해당 없으면 회색(#9ca3af), 그 외 에러상황은 빨간색
+                              color: validation.summaryTable.rescuePossible === 'O' ? '#16a34a' : 
+                                     (validation.summaryTable.rescuePossible === 'X' ? '#9ca3af' : '#ef4444')
+                            }}>
+                              {/* 값이 'X'일 경우 '-'로 렌더링, 아니면 원래 값 렌더링 */}
+                              {validation.summaryTable.rescuePossible === 'X' ? '-' : validation.summaryTable.rescuePossible}
                             </td>
+                            {/* 수정된 부분 끝 */}
                             <td style={{...styles.td, textAlign: 'center', fontSize: 15, fontWeight: 'bold', color: validation.summaryTable.overall === 'BBB 이상' ? '#1d4ed8' : '#ef4444'}}>
                               {validation.summaryTable.overall}
                             </td>
