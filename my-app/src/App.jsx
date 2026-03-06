@@ -475,39 +475,50 @@ export default function App() {
                         <tr><th style={styles.th}>평가 항목</th><th style={styles.th}>추출 값</th><th style={styles.th}>데이터 출처</th></tr>
                       </thead>
                       <tbody>
-                        {inputsTable.map((r, i) => {
-                          // 🚀 [추가] 추출항목 매핑 테이블
-                          const fieldMap = {
-                            "IPC 수": "ipcCount", "독립항 수": "indepCount", "종속항 수": "depCount",
-                            "종속항의 평균깊이": "avgDepth", "청구항 계열 수": "claimSeries", "독립항 단어수": "indepWordLen",
-                            "발명의 설명의 단어수": "descWordLen", "도면 수": "drawingCount", "발명자수": "inventorCount"
-                          };
-                          const editKey = fieldMap[r.key];
+                      {inputsTable.map((r, i) => {
+                        // 추출항목 매핑 테이블
+                        const fieldMap = {
+                          "IPC 수": "ipcCount", "독립항 수": "indepCount", "종속항 수": "depCount",
+                          "종속항의 평균깊이": "avgDepth", "청구항 계열 수": "claimSeries", "독립항 단어수": "indepWordLen",
+                          "발명의 설명의 단어수": "descWordLen", "도면 수": "drawingCount", "발명자수": "inventorCount"
+                        };
+                        const editKey = fieldMap[r.key];
 
-                          return (
-                            <tr key={i}>
-                              <td style={styles.td}>{r.key}</td>
-                              <td style={styles.td}>
-                                {/* 매핑된 추출값 항목이면 인풋박스를 보여주고, 아니면 그냥 텍스트 출력 */}
-                                {editKey ? (
-                                  <input
-                                    type="number"
-                                    step={editKey === 'avgDepth' ? '0.1' : '1'}
-                                    value={editableExtracted[editKey] ?? r.value}
-                                    onChange={(e) => setEditableExtracted({...editableExtracted, [editKey]: e.target.value})}
-                                    style={{ width: 80, padding: 6, border: '1px solid #3b82f6', borderRadius: 4, textAlign: 'center', fontWeight: 'bold' }}
-                                  />
-                                ) : (
-                                  <b>{r.value}</b>
-                                )}
-                              </td>
-                              <td style={{...styles.td, color: r.status.includes('자동') ? '#16a34a' : (r.status.includes('입력') ? '#3b82f6' : '#ea580c')}}>
-                                {r.status}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
+                        return (
+                          <tr key={i}>
+                            <td style={styles.td}>{r.key}</td>
+                            <td style={styles.td}>
+                              {/* 매핑된 추출값 항목이면 인풋박스를 보여주고, 아니면 그냥 텍스트 출력 */}
+                              {editKey ? (
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max={editKey === 'claimSeries' ? "2" : undefined}
+                                  step={editKey === 'avgDepth' ? '0.1' : '1'}
+                                  value={editableExtracted[editKey] ?? r.value}
+                                  onChange={(e) => {
+                                    let val = e.target.value;
+                                    // 빈 칸 지우기(백스페이스)는 허용하되, 숫자가 입력되면 제한 적용
+                                    if (val !== "") {
+                                      let num = Number(val);
+                                      if (num < 0) val = "0"; // 0 미만 방지
+                                      if (editKey === 'claimSeries' && num > 2) val = "2"; // 계열 수 2 초과 방지
+                                    }
+                                    setEditableExtracted({...editableExtracted, [editKey]: val});
+                                  }}
+                                  style={{ width: 80, padding: 6, border: '1px solid #3b82f6', borderRadius: 4, textAlign: 'center', fontWeight: 'bold' }}
+                                />
+                              ) : (
+                                <b>{r.value}</b>
+                              )}
+                            </td>
+                            <td style={{...styles.td, color: r.status.includes('자동') ? '#16a34a' : (r.status.includes('입력') ? '#3b82f6' : '#ea580c')}}>
+                              {r.status}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
                     </table>
                     
                     {/* 🚀 [추가] 재계산 버튼 */}
