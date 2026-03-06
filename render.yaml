@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: smart-eval-backend
+    env: python
+    region: singapore
+    plan: free
+    rootDir: server  # 👈 핵심! 백엔드 폴더만 타겟팅합니다.
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
