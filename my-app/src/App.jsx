@@ -36,6 +36,9 @@ export default function App() {
   const [showAdvanced, setShowAdvanced] = useState(false); // 심화 지표 토글 상태
   const fileInputRef = useRef(null);
 
+  // 🚀 [추가] 추출된 값을 담아두고 수정할 수 있는 상태
+  const [editableExtracted, setEditableExtracted] = useState({});
+
   // 3. 접기/펼치기 상태 (finalGrade 추가)
   const [collapsed, setCollapsed] = useState({
     basic: false, claims: false, inputs: false, smart: false, validation: false, finalGrade: false
@@ -128,8 +131,59 @@ export default function App() {
 
       setReport(data);
 
+      // 🚀 [추가] 서버에서 온 자동추출 값을 수정 폼에 복사
+      const v = data.smart?.variables || {};
+      setEditableExtracted({
+        ipcCount: v.ipc || 0,
+        indepCount: v.indep_count || 0,
+        depCount: v.dep_count || 0,
+        avgDepth: v.avg_depth || 0,
+        claimSeries: v.claim_series || 0,
+        indepWordLen: v.indep_word_len || 0,
+        descWordLen: v.desc_word_len || 0,
+        drawingCount: v.drawing || 0,
+        inventorCount: v.inventor_count || 0,
+      });
+
     } catch (e) {
       setErrorMsg(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // 🚀 [추가] 재계산 API 호출 함수
+  async function onRecalculate() {
+    setLoading(true);
+    try {
+      const payload = {
+        fastTrack, officeActionCount, annuityCount, techField, appealCount, assigneeChangeCount,
+        pledgeCount, divisionalPriorityCount, familyCountryCount, licenseeCount, priorArtForeignCount,
+        totalCitedByCount, citedRefForeignCount, citedVsFilingGap, earlyPublication,
+        
+        ipcCount: Number(editableExtracted.ipcCount),
+        indepCount: Number(editableExtracted.indepCount),
+        depCount: Number(editableExtracted.depCount),
+        avgDepth: Number(editableExtracted.avgDepth),
+        claimSeries: Number(editableExtracted.claimSeries),
+        indepWordLen: Number(editableExtracted.indepWordLen),
+        descWordLen: Number(editableExtracted.descWordLen),
+        drawingCount: Number(editableExtracted.drawingCount),
+        inventorCount: Number(editableExtracted.inventorCount),
+      };
+
+      const res = await fetch("/api/recalculate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      // 수정된 계산 결과만 부분 업데이트
+      setReport(prev => ({ ...prev, inputsTable: data.inputsTable, smart: data.smart, validation: data.validation }));
+    } catch (e) {
+      alert("재계산 실패: " + e.message);
     } finally {
       setLoading(false);
     }
@@ -415,20 +469,54 @@ export default function App() {
                   <button onClick={() => toggleCollapse('inputs')} style={styles.collapseBtn}>{collapsed.inputs ? '▼ 펼치기' : '▲ 접기'}</button>
                 </div>
                 {!collapsed.inputs && (
-                  <table style={styles.table}>
-                    <thead>
-                      <tr><th style={styles.th}>평가 항목</th><th style={styles.th}>추출 값</th><th style={styles.th}>데이터 출처</th></tr>
-                    </thead>
-                    <tbody>
-                      {inputsTable.map((r, i) => (
-                        <tr key={i}>
-                          <td style={styles.td}>{r.key}</td>
-                          <td style={styles.td}><b>{r.value}</b></td>
-                          <td style={{...styles.td, color: r.status.includes('자동') ? '#16a34a' : (r.status.includes('입력') ? '#3b82f6' : '#6b7280')}}>{r.status}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr><th style={styles.th}>평가 항목</th><th style={styles.th}>추출 값</th><th style={styles.th}>데이터 출처</th></tr>
+                      </thead>
+                      <tbody>
+                        {inputsTable.map((r, i) => {
+                          // 🚀 [추가] 추출항목 매핑 테이블
+                          const fieldMap = {
+                            "IPC 수": "ipcCount", "독립항 수": "indepCount", "종속항 수": "depCount",
+                            "종속항의 평균깊이": "avgDepth", "청구항 계열 수": "claimSeries", "독립항 단어수": "indepWordLen",
+                            "발명의 설명의 단어수": "descWordLen", "도면 수": "drawingCount", "발명자수": "inventorCount"
+                          };
+                          const editKey = fieldMap[r.key];
+
+                          return (
+                            <tr key={i}>
+                              <td style={styles.td}>{r.key}</td>
+                              <td style={styles.td}>
+                                {/* 매핑된 추출값 항목이면 인풋박스를 보여주고, 아니면 그냥 텍스트 출력 */}
+                                {editKey ? (
+                                  <input
+                                    type="number"
+                                    step={editKey === 'avgDepth' ? '0.1' : '1'}
+                                    value={editableExtracted[editKey] ?? r.value}
+                                    onChange={(e) => setEditableExtracted({...editableExtracted, [editKey]: e.target.value})}
+                                    style={{ width: 80, padding: 6, border: '1px solid #3b82f6', borderRadius: 4, textAlign: 'center', fontWeight: 'bold' }}
+                                  />
+                                ) : (
+                                  <b>{r.value}</b>
+                                )}
+                              </td>
+                              <td style={{...styles.td, color: r.status.includes('자동') ? '#16a34a' : (r.status.includes('입력') ? '#3b82f6' : '#ea580c')}}>
+                                {r.status}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    
+                    {/* 🚀 [추가] 재계산 버튼 */}
+                    <div style={{ padding: "12px 16px", background: "#f8fafc", textAlign: "right", borderTop: "1px solid #e5e7eb", borderBottomLeftRadius: 10, borderBottomRightRadius: 10 }}>
+                      <button onClick={onRecalculate} style={{ ...styles.btn, background: "#10b981", borderColor: "#059669", fontSize: 14 }}>
+                        🔄 수정한 숫자로 결과 즉시 재계산
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
 
@@ -461,7 +549,6 @@ export default function App() {
                 </div>
                 {!collapsed.validation && (
                   <>
-                    {/* 👇 원래 있던 주요 요소 검증표 (복구) 👇 */}
                     <table style={styles.table}>
                       <thead>
                         <tr><th style={styles.th}>중요도</th><th style={styles.th}>항목</th><th style={styles.th}>목표 기준치</th><th style={styles.th}>실제 값</th><th style={styles.th}>충족 여부</th></tr>
@@ -480,41 +567,34 @@ export default function App() {
                     </table>
                     
                     <div style={styles.help}>
-                      * 중요도 [상] 3개 필수 충족 및 [중] 2개 충족 시 BBB 이상 부여. <br />(단, [중] 1개 실패 시, 다른 [중] 항목이 목표치의 1.2배를 달성하거나, 독립항수가 기준치 이상이면, 중요도 [중]에서 어느 하나가 부족하더라도 구제됨)<br/>
-                      * 위 검증 룰은 <b>연차등록 1년 이하</b> 특허에만 적용됩니다. (현재 설정: {annuityCount}년차)
+                      * 검증요건 전항목 부합 여부를 원칙으로 하되, 자체적 구제룰을 적용하여 FAIL인 항목이 있더라도 BBB 이상으로 판정될 수 있습니다. <br />
                     </div>
 
-                    {/* 👇 새로 추가한 종합평가 요약 테이블 👇 */}
                     {validation.summaryTable && (
-                      <table style={{ ...styles.table, marginTop: 24, border: '2px solid #e5e7eb' }}>
+                      <table style={{ ...styles.table, marginTop: 24, border: '2px solid #e5e7eb', fontFamily: "'맑은 고딕', sans-serif", lineHeight: 1.5 }}>
                         <thead>
                           <tr style={{ background: '#f8fafc' }}>
-                            <th style={{...styles.th, textAlign: 'center', fontSize: 13, borderRight: '1px solid #e5e7eb'}}>검증요건 전항목 부합 여부</th>
-                            <th style={{...styles.th, textAlign: 'center', fontSize: 13, borderRight: '1px solid #e5e7eb'}}>FAIL 구제 가능 여부</th>
-                            <th style={{...styles.th, textAlign: 'center', fontSize: 13}}>종합평가</th>
+                            <th style={{...styles.th, textAlign: 'center', fontSize: '10pt', fontWeight: 'normal', color: 'black', borderRight: '1px solid #e5e7eb'}}>검증요건 전항목 부합 여부</th>
+                            <th style={{...styles.th, textAlign: 'center', fontSize: '10pt', fontWeight: 'normal', color: 'black', borderRight: '1px solid #e5e7eb'}}>FAIL 구제 가능 여부</th>
+                            <th style={{...styles.th, textAlign: 'center', fontSize: '10pt', fontWeight: 'normal', color: 'black'}}>종합평가</th>
                           </tr>
                         </thead>
                         <tbody>
                           <tr>
-                            <td style={{...styles.td, textAlign: 'center', fontSize: 15, fontWeight: 'bold', borderRight: '1px solid #f3f4f6', color: validation.summaryTable.allPassed === 'O' ? '#16a34a' : '#ef4444'}}>
+                            <td style={{...styles.td, textAlign: 'center', fontSize: '10pt', fontWeight: 'bold', borderRight: '1px solid #f3f4f6', color: validation.summaryTable.allPassed === 'O' ? '#16a34a' : '#ef4444'}}>
                               {validation.summaryTable.allPassed}
                             </td>
-                            {/* 수정된 부분 시작 */}
                             <td style={{
                               ...styles.td, 
                               textAlign: 'center', 
-                              fontSize: 15, 
+                              fontSize: '10pt',
                               fontWeight: 'bold', 
                               borderRight: '1px solid #f3f4f6', 
-                              // 'O'면 녹색, 'X'나 해당 없으면 회색(#9ca3af), 그 외 에러상황은 빨간색
-                              color: validation.summaryTable.rescuePossible === 'O' ? '#16a34a' : 
-                                     (validation.summaryTable.rescuePossible === 'X' ? '#9ca3af' : '#ef4444')
+                              color: validation.summaryTable.allPassed === 'O' ? '#9ca3af' : (validation.summaryTable.rescuePossible === 'O' ? '#16a34a' : '#ef4444')
                             }}>
-                              {/* 값이 'X'일 경우 '-'로 렌더링, 아니면 원래 값 렌더링 */}
-                              {validation.summaryTable.rescuePossible === 'X' ? '-' : validation.summaryTable.rescuePossible}
+                              {validation.summaryTable.allPassed === 'O' ? '-' : validation.summaryTable.rescuePossible}
                             </td>
-                            {/* 수정된 부분 끝 */}
-                            <td style={{...styles.td, textAlign: 'center', fontSize: 15, fontWeight: 'bold', color: validation.summaryTable.overall === 'BBB 이상' ? '#1d4ed8' : '#ef4444'}}>
+                            <td style={{...styles.td, textAlign: 'center', fontSize: '10pt', fontWeight: 'bold', color: validation.summaryTable.overall === 'BBB 이상' ? '#1d4ed8' : '#ef4444'}}>
                               {validation.summaryTable.overall}
                             </td>
                           </tr>

@@ -4,6 +4,7 @@ from io import BytesIO
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pypdf import PdfReader
+from pydantic import BaseModel
 import docx
 
 app = FastAPI(title="SMART Patent Analysis API")
@@ -422,7 +423,6 @@ def calculate_smart_score(claims_info: dict, patent_info: dict, fast_track: int,
 # 5. 룰 검증 (구제 룰 포함)
 # ==========================================
 def validate_rules(claims_info, patent_info, fast_track, oa_count, tech_field, smart_grade, annuity_count):
-    # 🚀 [요청 2 반영] 전기전자IT 분야 독립항수 기준치를 5로 수정
     indep_std = 5 if tech_field == "전기 전자 IT" else 3
     
     indep = claims_info["independentCount"]
@@ -444,26 +444,72 @@ def validate_rules(claims_info, patent_info, fast_track, oa_count, tech_field, s
     ]
 
     bbb_predict = False
-    
-    # ⭐ 요약 테이블용 상태 변수 추가
     all_passed = False       
     rescue_possible = False  
     
     if annuity_count <= 1:
         top_ok = all(r["pass"] for r in rows if r["level"] == "상")
         mid_pass_count = sum(1 for r in rows if r["level"] == "중" and r["pass"])
+        low_pass_count = sum(1 for r in rows if r["level"] == "하" and r["pass"])
         
-        if top_ok:
-            # 상 조건(독립항수 포함)이 모두 통과되었을 때
-            if mid_pass_count == 2: 
-                bbb_predict = True
-                all_passed = True  # ⭐ 정상적으로 전항 부합함
-            elif mid_pass_count == 1:
-                # 🚀 [요청 3 반영] 상 조건이 모두 통과되었다면(=독립항수가 기준치 이상이면)
-                # 중 항목에서 1개가 부족하더라도 1.2배 달성 여부와 무관하게 무조건 구제
-                if indep >= indep_std:
+        if tech_field == "전기 전자 IT":
+            if top_ok:
+                if mid_pass_count == 2: 
                     bbb_predict = True
-                    rescue_possible = True # ⭐ 구제 룰이 적용됨
+                    if low_pass_count == 3:
+                        all_passed = True
+                    else:
+                        rescue_possible = True
+                elif mid_pass_count == 1:
+                    if indep >= indep_std:
+                        bbb_predict = True
+                        rescue_possible = True
+        else:
+            # 🚀 기계/기구/화학 분야 전용 구제 룰 적용 (Rule 1 ~ 4)
+            
+            # 1단계: 원래 통과 상태 백업
+            eff_indep_pass = indep >= 3
+            eff_dep_pass = dep >= 7
+            eff_depth_pass = depth >= 2.3
+            
+            # 2단계: 구제 룰 검사 및 통과 상태 덮어쓰기
+            
+            # [Rule 1] 종속항 평균깊이 부족 구제
+            if not eff_depth_pass:
+                if (2.3 - depth) * 0.13994 < (indep - 3) * 0.20924:
+                    eff_depth_pass = True
+                    rescue_possible = True
+                    
+            # [Rule 2] 종속항 수 부족 구제
+            if not eff_dep_pass:
+                cond1 = (7 - dep) * 0.02501 < (indep - 3) * 0.20924
+                cond2 = (7 - dep) * 0.02501 < (depth - 2.3) * 0.13994
+                if cond1 or cond2:
+                    eff_dep_pass = True
+                    rescue_possible = True
+                    
+            # [Rule 4] 독립항 수 부족 구제
+            if not eff_indep_pass:
+                n = 3 - indep
+                if n > 0 and depth >= 2.3 * 1.65 * n:
+                    eff_indep_pass = True
+                    rescue_possible = True
+
+            # 3단계: 최종 판정
+            # [Rule 3] 중요도 하(low_pass_count)의 fail 여부에 상관없이 상/중이 모두 pass면 구제 통과
+            eff_top_ok = fast_track == 1 and series >= 2 and eff_indep_pass
+            eff_mid_ok = eff_dep_pass and eff_depth_pass
+            
+            if eff_top_ok and eff_mid_ok:
+                bbb_predict = True
+                
+                # 모든 항목이 자력으로 통과했고, 수식 구제가 필요 없었다면 all_passed
+                if top_ok and mid_pass_count == 2 and not rescue_possible:
+                    if low_pass_count == 3:
+                        all_passed = True
+                    else:
+                        # Rule 3에 의해 하 항목 fail을 무시하고 통과한 것도 구제로 간주
+                        rescue_possible = True
 
     grade6 = "BBB" if bbb_predict else "BB"
     score_map = {"AAA":9, "AA":8, "A":7, "BBB":6, "BB":5, "B":4, "CCC":3, "CC":2, "C":1}
@@ -471,7 +517,6 @@ def validate_rules(claims_info, patent_info, fast_track, oa_count, tech_field, s
     s5, s6 = score_map.get(smart_grade, 0), score_map.get(grade6, 0)
     final_grade = smart_grade if s5 <= s6 else grade6
 
-    # ⭐ 리턴 값에 summaryTable 데이터를 추가하여 프론트로 전달
     return {
         "rows": rows, 
         "bbbOrAbove": bbb_predict, 
@@ -482,7 +527,6 @@ def validate_rules(claims_info, patent_info, fast_track, oa_count, tech_field, s
             "overall": "BBB 이상" if bbb_predict else "BBB 미만"
         }
     }
-
 # ==========================================
 # 🚀 메인 API 라우터
 # ==========================================
@@ -533,8 +577,24 @@ async def analyze_patent(
         patent_info["cited_ref_foreign"] = citedRefForeignCount
         patent_info["cited_vs_filing_gap"] = citedVsFilingGap
 
-        # ⚠️calculate_smart_score 함수의 변수 매핑(v) 딕셔너리 내부에서 
-        # v["appeal"] = patent_info.get("appeal", 0) 처럼 호출하도록 기존 함수도 연결되어 있어야 합니다.
+
+
+        # # =========================================================
+        # # 🚨 [임시 테스트 블록] PDF 파싱 결과를 무시하고 임의 값 강제 주입
+        # # 테스트가 끝나면 이 블록을 삭제하거나 주석 처리하세요.
+        # # =========================================================
+        # # 테스트 환경 세팅 (기계 분야, 우선심사 O, 청구항 계열 2)
+        # fastTrack = 1
+        # techField = "기계"
+        # claims_info["claimSeries"] = 2
+        
+        # # 👇 여기서 값을 바꿔가며 Rule 1~4를 테스트해 볼 수 있습니다.
+        # claims_info["independentCount"] = 3  # 독립항 수
+        # claims_info["dependentCount"] = 5    # 종속항 수
+        # claims_info["avgDepth"] = 5        # 종속항 평균 깊이
+        # # =========================================================
+        # # ⚠️calculate_smart_score 함수의 변수 매핑(v) 딕셔너리 내부에서 
+        # # v["appeal"] = patent_info.get("appeal", 0) 처럼 호출하도록 기존 함수도 연결되어 있어야 합니다.
         
         smart_data = calculate_smart_score(
         claims_info, patent_info, fastTrack, officeActionCount, techField, annuityCount, earlyPublication
@@ -581,6 +641,81 @@ async def analyze_patent(
         import traceback
         traceback.print_exc()
         return {"error": f"서버 분석 오류: {str(e)}"}
+# ==========================================
+# 🚀 [추가 1] 재계산 요청용 데이터 모델 정의
+class RecalcRequest(BaseModel):
+    fastTrack: int
+    officeActionCount: int
+    annuityCount: int
+    techField: str
+    appealCount: int
+    assigneeChangeCount: int
+    pledgeCount: int
+    divisionalPriorityCount: int
+    familyCountryCount: int
+    licenseeCount: int
+    priorArtForeignCount: int
+    totalCitedByCount: int
+    citedRefForeignCount: int
+    citedVsFilingGap: int
+    earlyPublication: int
+    
+    # 추출 수정값
+    ipcCount: int
+    indepCount: int
+    depCount: int
+    avgDepth: float
+    claimSeries: int
+    indepWordLen: int
+    descWordLen: int
+    drawingCount: int
+    inventorCount: int
+
+# 🚀 [추가 2] 문서 재파싱 없이 산식/룰만 다시 돌리는 엔드포인트
+@app.post("/api/recalculate")
+async def recalculate_score(req: RecalcRequest):
+    try:
+        patent_info = {
+            "ipcCount": req.ipcCount, "inventorCount": req.inventorCount, "drawingCount": req.drawingCount,
+            "descWordLen": req.descWordLen, "appeal": req.appealCount, "assignee_change": req.assigneeChangeCount,
+            "pledge": req.pledgeCount, "divisional_priority": req.divisionalPriorityCount, "family_country": req.familyCountryCount,
+            "licensee": req.licenseeCount, "prior_art_foreign": req.priorArtForeignCount, "total_cited_by": req.totalCitedByCount,
+            "cited_ref_foreign": req.citedRefForeignCount, "cited_vs_filing_gap": req.citedVsFilingGap,
+        }
+        claims_info = {
+            "independentCount": req.indepCount, "dependentCount": req.depCount,
+            "claimSeries": req.claimSeries, "avgDepth": req.avgDepth, "indepWordLen": req.indepWordLen,
+            "totalCount": req.indepCount + req.depCount 
+        }
+
+        # 기존 함수 재활용
+        smart_data = calculate_smart_score(claims_info, patent_info, req.fastTrack, req.officeActionCount, req.techField, req.annuityCount, req.earlyPublication)
+        validation_data = validate_rules(claims_info, patent_info, req.fastTrack, req.officeActionCount, req.techField, smart_data["grade"], req.annuityCount)
+
+        # 업데이트된 입력값 테이블 다시 생성
+        v = smart_data["variables"]
+        inputs = [
+            {"key": "IPC 수", "value": v["ipc"], "status": "수동수정됨"},
+            {"key": "독립항 수", "value": v["indep_count"], "status": "수동수정됨"},
+            {"key": "종속항 수", "value": v["dep_count"], "status": "수동수정됨"},
+            {"key": "종속항의 평균깊이", "value": v["avg_depth"], "status": "수동수정됨"},
+            {"key": "청구항 계열 수", "value": v["claim_series"], "status": "수동수정됨"},
+            {"key": "독립항 단어수", "value": v["indep_word_len"], "status": "수동수정됨"},
+            {"key": "발명의 설명의 단어수", "value": v["desc_word_len"], "status": "수동수정됨"},
+            {"key": "도면 수", "value": v["drawing"], "status": "수동수정됨"},
+            {"key": "발명자수", "value": v["inventor_count"], "status": "수동수정됨"},
+            {"key": "우선심사청구 여부", "value": v["fast_track"], "status": "사용자입력"},
+            {"key": "의견서 제출 수", "value": v["oa_count"], "status": "사용자입력"},
+            {"key": "연차등록 횟수", "value": v["annuity"], "status": "사용자입력"},
+            {"key": "기술분야", "value": req.techField, "status": "사용자입력"},
+        ]
+
+        return {"inputsTable": inputs, "smart": smart_data, "validation": validation_data}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": f"재계산 중 오류: {str(e)}"}
+# ==========================================
     
 if __name__ == "__main__":
     import uvicorn
