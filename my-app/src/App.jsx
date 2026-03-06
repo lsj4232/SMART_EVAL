@@ -474,7 +474,8 @@ export default function App() {
                       <thead>
                         <tr><th style={styles.th}>평가 항목</th><th style={styles.th}>추출 값</th><th style={styles.th}>데이터 출처</th></tr>
                       </thead>
-                      <tbody>
+                
+                    <tbody>
                       {inputsTable.map((r, i) => {
                         // 추출항목 매핑 테이블
                         const fieldMap = {
@@ -484,6 +485,11 @@ export default function App() {
                         };
                         const editKey = fieldMap[r.key];
 
+                        // HTML 스피너(화살표) 방어용 min/max 동적 설정
+                        let minAttr = "1";
+                        if (editKey === 'depCount' || editKey === 'avgDepth') minAttr = "0";
+                        let maxAttr = editKey === 'claimSeries' ? "2" : undefined;
+
                         return (
                           <tr key={i}>
                             <td style={styles.td}>{r.key}</td>
@@ -492,19 +498,43 @@ export default function App() {
                               {editKey ? (
                                 <input
                                   type="number"
-                                  min="0"
-                                  max={editKey === 'claimSeries' ? "2" : undefined}
+                                  min={minAttr}
+                                  max={maxAttr}
                                   step={editKey === 'avgDepth' ? '0.1' : '1'}
                                   value={editableExtracted[editKey] ?? r.value}
                                   onChange={(e) => {
                                     let val = e.target.value;
-                                    // 빈 칸 지우기(백스페이스)는 허용하되, 숫자가 입력되면 제한 적용
-                                    if (val !== "") {
-                                      let num = Number(val);
-                                      if (num < 0) val = "0"; // 0 미만 방지
-                                      if (editKey === 'claimSeries' && num > 2) val = "2"; // 계열 수 2 초과 방지
-                                    }
+                                    // 입력 중 실시간 방어: 계열 수는 2 초과 불가능
+                                    if (editKey === 'claimSeries' && Number(val) > 2) val = "2";
                                     setEditableExtracted({...editableExtracted, [editKey]: val});
+                                  }}
+                                  onBlur={(e) => {
+                                    let val = e.target.value;
+                                    let num = Number(val);
+
+                                    // 비정상 값(빈 문자열 등)이 들어오면 기본값 0으로 처리 후 세부 검증
+                                    if (isNaN(num) || val === "") num = 0;
+
+                                    // 조건 1: 종속항 수 (최소 0)
+                                    if (editKey === 'depCount') {
+                                      if (num < 0) num = 0; 
+                                    } 
+                                    // 조건 2: 종속항의 평균깊이 (0 또는 2.1 이상)
+                                    else if (editKey === 'avgDepth') {
+                                      if (num <= 0) num = 0; 
+                                      else if (num > 0 && num < 2.1) num = 2.1; 
+                                    } 
+                                    // 조건 3: 청구항 계열 수 (최소 1, 최대 2)
+                                    else if (editKey === 'claimSeries') {
+                                      if (num < 1) num = 1; 
+                                      else if (num > 2) num = 2; 
+                                    } 
+                                    // 조건 4: 나머지 항목 (IPC, 독립항수, 단어수, 도면수, 발명자수 -> 최소 1)
+                                    else {
+                                      if (num < 1) num = 1; 
+                                    }
+
+                                    setEditableExtracted({...editableExtracted, [editKey]: num});
                                   }}
                                   style={{ width: 80, padding: 6, border: '1px solid #3b82f6', borderRadius: 4, textAlign: 'center', fontWeight: 'bold' }}
                                 />
