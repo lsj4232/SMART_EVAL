@@ -9,6 +9,13 @@ import docx
 
 app = FastAPI(title="SMART Patent Analysis API")
 
+# 👇 허락할 프론트엔드 주소 목록
+origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://smartip.vercel.app",  # 👈 반드시 이 Vercel 주소를 추가해야 합니다! (맨 뒤에 / 없음)
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
