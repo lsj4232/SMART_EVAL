@@ -119,7 +119,9 @@ export default function App() {
       // 🚀 [추가] 조기공개여부 전송
       form.append("earlyPublication", String(earlyPublication));
 
-      const res = await fetch("/api/analyze", { method: "POST", body: form });
+      // 🌟 API URL 환경변수 적용
+      const apiUrl = import.meta.env.VITE_API_URL || "";
+      const res = await fetch(`${apiUrl}/api/analyze`, { method: "POST", body: form });
       
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
@@ -172,7 +174,9 @@ export default function App() {
         inventorCount: Number(editableExtracted.inventorCount),
       };
 
-      const res = await fetch("/api/recalculate", {
+      // 🌟 API URL 환경변수 적용
+      const apiUrl = import.meta.env.VITE_API_URL || "";
+      const res = await fetch(`${apiUrl}/api/recalculate`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });

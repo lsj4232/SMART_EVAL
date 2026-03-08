@@ -1,5 +1,0 @@
-fastapi
-python-multipart
-pydantic
-pypdf
-python-docx
