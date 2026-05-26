@@ -195,7 +195,11 @@ def is_same_category(ref_tail, curr_tail):
 import re
 
 def parse_claims(text: str, is_registration: bool = False):
-    # 전역 바닥글 청소 (공통)
+    # 전역 바닥글/머리글 청소 (공통)
+    # 페이지 푸터 "- 5 -"
+    text = re.sub(r'(?m)^\s*-\s*\d+\s*-\s*$', '', text)
+    # 등록/공개 특허공보 페이지 헤더 "공개특허 10-2026-0072271", "등록특허 10-1234567"
+    text = re.sub(r'(?m)^\s*(?:공\s*개|등\s*록)\s*특\s*허\s*[\d\-\s]+$', '', text)
     text = re.sub(r'(?m)^\s*\d+\s*-\s*\d+\s*$', '', text)
     text = re.sub(r'(?m)^\s*\d{4}[-./]\d{2}[-./]\d{2}\s*$', '', text)
 
@@ -255,11 +259,13 @@ def parse_claims(text: str, is_registration: bool = False):
             
             intro = claim_text[:80]
             cut_match = re.search(r'(에\s*있어서|에\s*따[르른]|을\s*따르는)', intro)
-            
+            has_formal_marker = False
+
             if cut_match:
                 ref_part = intro[:cut_match.end()]
                 # 🚀 [방어 1] "제1 방법" 등을 걸러내기 위해, 반드시 '항' 또는 '청구항' 단어가 있을 때만 인용항으로 취급
                 if re.search(r'(청구항|항)', ref_part):
+                    has_formal_marker = True
                     nums = [int(n) for n in re.findall(r'\d+', ref_part)]
                     if nums:
                         if '내지' in ref_part or '~' in ref_part:
@@ -296,13 +302,24 @@ def parse_claims(text: str, is_registration: bool = False):
             else:
                 first_ref = references[0]
                 ref_tail = tail_map.get(first_ref, "")
-                
-                if not is_same_category(ref_tail, tail):
+                ref_str = ", ".join(map(str, references))
+
+                # 🚀 명시적 인용 마커(에 있어서 / 에 따른 / 을 따르는)가 있으면,
+                # 카테고리(범주)가 달라도 형식적 종속항으로 분류 (한국 특허 실무 관행)
+                # 예: "제N항에 따른 시스템을 이용한 방법", "제N항의 방법을 구현하기 위한 기록매체"
+                if has_formal_marker:
+                    is_independent = False
+                    if not is_same_category(ref_tail, tail):
+                        reason = (f"다중종속항 (제[{ref_str}]항 참조, 범주 전이: {ref_tail}→{tail})"
+                                  if is_multi else
+                                  f"종속항 (제{ref_str}항 참조, 범주 전이: {ref_tail}→{tail})")
+                    else:
+                        reason = f"다중종속항 (제[{ref_str}]항 참조)" if is_multi else f"종속항 (제{ref_str}항 참조)"
+                elif not is_same_category(ref_tail, tail):
                     is_independent = True
                     reason = f"인용항({ref_tail})과 현재항({tail})의 대상어 범주가 달라 독립항으로 판단함"
                 else:
                     is_independent = False
-                    ref_str = ", ".join(map(str, references))
                     reason = f"다중종속항 (제[{ref_str}]항 참조)" if is_multi else f"종속항 (제{ref_str}항 참조)"
 
         if is_independent:
