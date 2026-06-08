@@ -286,9 +286,16 @@ def parse_claims(text: str, is_registration: bool = False):
                     if m.group(2): nums.append(int(m.group(2)))
                 
                 if nums:
-                    references = sorted(list(set(nums)))
-                    if len(references) > 1:
+                    # 🚀 [수정] fallback 경로에서도 '내지'/'~' 범위 인용을 펼친다
+                    #   (예: "제1항 내지 제10항 중에서 선택된 어느 한 항의 조성물을 이용하여 제조한 …"
+                    #    처럼 '에 있어서'가 없어 메인 경로를 못 타는 다중종속항)
+                    if ('내지' in intro or '~' in intro) and len(nums) >= 2:
                         is_multi = True
+                        references = list(range(min(nums), max(nums) + 1))
+                    else:
+                        references = sorted(list(set(nums)))
+                        if len(references) > 1:
+                            is_multi = True
 
             # 🚀 [방어 3] 혹시라도 파싱 오류로 인해 '자기 자신'을 인용항으로 삼은 경우, 즉시 삭제하여 모순 해결
             if no in references:
@@ -301,7 +308,10 @@ def parse_claims(text: str, is_registration: bool = False):
                 first_ref = references[0]
                 ref_tail = tail_map.get(first_ref, "")
 
-                if not is_same_category(ref_tail, tail):
+                # 🚀 [수정] 다중종속(범위/복수 인용, 예 "제N항 내지 제M항 중 어느 한 항",
+                #   "제N항 또는 제M항")은 그 자체가 종속항 전형 구문이므로, 범주가 달라도
+                #   독립항으로 재분류하지 않는다. 범주 전이 → 독립 규칙은 '단일 인용'에만 적용.
+                if not is_multi and not is_same_category(ref_tail, tail):
                     is_independent = True
                     reason = f"인용항({ref_tail})과 현재항({tail})의 대상어 범주가 달라 독립항으로 판단함"
                 else:
