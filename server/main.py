@@ -322,35 +322,57 @@ def parse_claims(text: str, is_registration: bool = False):
             "reason": reason
         })
 
+    # ==========================================
+    # 🚀 [다중종속 깊이 알고리즘]
+    # 1) 각 청구항의 '최심(deepest) 깊이' = 1 + max(인용항들의 최심 깊이). 독립항 = 1.
+    #    └ 이 값은 '하류 청구항에 인용될 때' 사용된다. 즉 다중종속항(예: 제12항이 1~11항 인용)을
+    #      하류 청구항(제13항)이 인용하면, 다중종속항은 '가장 깊은 한 항'만 인용한 것으로 본다.
+    # 2) 평균깊이 계산 시에는, 다중종속항을 '인용하는 각 항마다 하나의 인스턴스'로 펼쳐서 센다.
+    #    └ 예: 제12항이 제1~11항을 인용 → 11개의 인스턴스, 각 인스턴스 깊이 = (해당 인용항의 최심 깊이 + 1).
+    #      단일 종속항은 1개의 인스턴스(= 인용항 최심 깊이 + 1)로 센다.
+    # ==========================================
+    row_by_no = {r["no"]: r for r in rows}
     depths = {}
+
+    def _deepest_depth(no, stack):
+        # 🚀 [방어] 메모이제이션 + 순환 인용 방지(stack)로 무한재귀 차단
+        if no in depths:
+            return depths[no]
+        r = row_by_no.get(no)
+        if r is None or r["isDeleted"]:
+            return None
+        if r["isIndependent"]:
+            depths[no] = 1
+            return 1
+        if no in stack:
+            depths[no] = 2
+            return 2
+        next_stack = stack | {no}
+        parent_depths = []
+        for ref in r["references"]:
+            d = _deepest_depth(ref, next_stack)
+            if d is not None:
+                parent_depths.append(d)
+        depths[no] = (max(parent_depths) + 1) if parent_depths else 2
+        return depths[no]
+
     for r in rows:
-        if not r["isDeleted"] and r["isIndependent"]:
-            depths[r["no"]] = 1 
+        if not r["isDeleted"]:
+            _deepest_depth(r["no"], set())
 
-    changed = True
-    loop_limit = 100 # 🚀 [방어 4] 어떠한 경우에도 무한루프에 빠져 서버가 죽지 않도록 최대 반복 횟수(100회) 제한 설정
-    loops = 0
-    
-    while changed and loops < loop_limit:
-        loops += 1
-        changed = False
-        for r in rows:
-            if r["isDeleted"] or r["isIndependent"]: continue
-            no = r["no"]
-            
-            valid_ref_depths = [depths[ref] for ref in r["references"] if ref in depths]
-            
-            if valid_ref_depths:
-                new_depth = min(valid_ref_depths) + 1
-            else:
-                new_depth = 2 
-                
-            if no not in depths or depths[no] != new_depth:
-                depths[no] = new_depth
-                changed = True
+    # 평균깊이: 다중종속항은 인용항 수만큼 인스턴스로 펼쳐서 평균 산정
+    depth_instances = []
+    for r in rows:
+        if r["isDeleted"] or r["isIndependent"]:
+            continue
+        valid_refs = [ref for ref in r["references"] if depths.get(ref) is not None]
+        if valid_refs:
+            for ref in valid_refs:          # 단일 종속=1개, 다중 종속=인용항 수만큼
+                depth_instances.append(depths[ref] + 1)
+        else:
+            depth_instances.append(depths.get(r["no"], 2))
 
-    dep_depths = [depths[r["no"]] for r in rows if not r["isIndependent"] and not r["isDeleted"] and r["no"] in depths]
-    avg_depth = round(sum(dep_depths) / len(dep_depths), 3) if dep_depths else 0
+    avg_depth = round(sum(depth_instances) / len(depth_instances), 3) if depth_instances else 0
 
     indep_rows = [r for r in rows if r["isIndependent"]]
     has_method = any(r["tail"].endswith('방법') or r["tail"].endswith('공정') for r in indep_rows)
