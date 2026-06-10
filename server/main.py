@@ -338,20 +338,19 @@ def parse_claims(text: str, is_registration: bool = False):
         })
 
     # ==========================================
-    # 🚀 [다중종속 깊이 알고리즘]
-    # 1) 각 청구항의 '최심(deepest) 깊이' = 1 + max(인용항들의 최심 깊이). 독립항 = 1.
-    #    └ 이 값은 '하류 청구항에 인용될 때' 사용된다. 즉 다중종속항(예: 제12항이 1~11항 인용)을
-    #      하류 청구항(제13항)이 인용하면, 다중종속항은 '가장 깊은 한 항'만 인용한 것으로 본다.
-    # 2) 평균깊이 계산 시에는, '청구항 1개 = 깊이값 1개'로 센다(종속항 수 = 표본 수).
-    #    └ 단일 종속항: 깊이 = (인용항 최심 깊이 + 1).
-    #    └ 다중 종속항: 그 항만의 깊이 = 인용항별 (최심 깊이 + 1)들의 평균.
-    #      예: 제11항이 제1~6항을 인용(각 깊이 1~6) → (2+3+4+5+6+7)/6 = 4.5.
-    #      → 즉 다중종속항은 여러 인스턴스로 펼치지 않고, 그 항 자체가 하나의 평균 깊이값을 가진다.
+    # 🚀 [통합 깊이 알고리즘] — 정의 d(c)를 단일 재귀로 구현(하류 전파도 동일 값 사용).
+    #   d(c) = 1                                  (c가 독립항)
+    #        = d(p) + 1                           (c가 단일 종속항, 피인용항 p)
+    #        = (1/|P(c)|) · Σ_{p∈P(c)} (d(p)+1)   (c가 다중 종속항, 인용항 집합 P(c))
+    #   └ 단일 종속항은 |P(c)|=1 이므로 d(p)+1 과 동일(두 분기를 하나로 통합).
+    #   └ 다중 종속항의 평균 깊이는 '하류 청구항이 인용할 때'에도 그대로 전파된다
+    #     (이전의 max 기반 '최심 깊이' 2단 구조 폐기 → 정의와 구현 완전 일치).
+    #   예: 제11항이 제1~6항 인용(각 깊이 1~6) → (2+3+4+5+6+7)/6 = 4.5.
     # ==========================================
     row_by_no = {r["no"]: r for r in rows}
     depths = {}
 
-    def _deepest_depth(no, stack):
+    def _depth(no, stack):
         # 🚀 [방어] 메모이제이션 + 순환 인용 방지(stack)로 무한재귀 차단
         if no in depths:
             return depths[no]
@@ -365,31 +364,22 @@ def parse_claims(text: str, is_registration: bool = False):
             depths[no] = 2
             return 2
         next_stack = stack | {no}
-        parent_depths = []
+        per_ref = []
         for ref in r["references"]:
-            d = _deepest_depth(ref, next_stack)
+            d = _depth(ref, next_stack)
             if d is not None:
-                parent_depths.append(d)
-        depths[no] = (max(parent_depths) + 1) if parent_depths else 2
+                per_ref.append(d + 1)                 # 인용 경로별 깊이 = d(p)+1
+        depths[no] = (sum(per_ref) / len(per_ref)) if per_ref else 2  # 단일=1개, 다중=평균
         return depths[no]
 
     for r in rows:
         if not r["isDeleted"]:
-            _deepest_depth(r["no"], set())
+            _depth(r["no"], set())
 
-    # 평균깊이: 종속항 1개 = 깊이값 1개. 다중종속항은 자신의 인용항별 깊이의 '평균'을 단일 깊이로 갖는다.
-    depth_per_claim = []
-    for r in rows:
-        if r["isDeleted"] or r["isIndependent"]:
-            continue
-        valid_refs = [ref for ref in r["references"] if depths.get(ref) is not None]
-        if valid_refs:
-            per_ref = [depths[ref] + 1 for ref in valid_refs]   # 단일=1개, 다중=인용항 수만큼
-            depth_per_claim.append(sum(per_ref) / len(per_ref))  # 그 항만의 깊이 = 인용항별 깊이 평균
-        else:
-            depth_per_claim.append(depths.get(r["no"], 2))
-
-    avg_depth = round(sum(depth_per_claim) / len(depth_per_claim), 3) if depth_per_claim else 0
+    # 전체 종속항 평균깊이 D̄ = (Σ_{c∈C_dep} d(c)) / |C_dep|  (삭제항 제외 단일+다중 종속항)
+    dep_depths = [depths[r["no"]] for r in rows
+                  if not r["isDeleted"] and not r["isIndependent"] and depths.get(r["no"]) is not None]
+    avg_depth = round(sum(dep_depths) / len(dep_depths), 3) if dep_depths else 0
 
     indep_rows = [r for r in rows if r["isIndependent"]]
     has_method = any(r["tail"].endswith('방법') or r["tail"].endswith('공정') for r in indep_rows)
