@@ -342,9 +342,11 @@ def parse_claims(text: str, is_registration: bool = False):
     # 1) 각 청구항의 '최심(deepest) 깊이' = 1 + max(인용항들의 최심 깊이). 독립항 = 1.
     #    └ 이 값은 '하류 청구항에 인용될 때' 사용된다. 즉 다중종속항(예: 제12항이 1~11항 인용)을
     #      하류 청구항(제13항)이 인용하면, 다중종속항은 '가장 깊은 한 항'만 인용한 것으로 본다.
-    # 2) 평균깊이 계산 시에는, 다중종속항을 '인용하는 각 항마다 하나의 인스턴스'로 펼쳐서 센다.
-    #    └ 예: 제12항이 제1~11항을 인용 → 11개의 인스턴스, 각 인스턴스 깊이 = (해당 인용항의 최심 깊이 + 1).
-    #      단일 종속항은 1개의 인스턴스(= 인용항 최심 깊이 + 1)로 센다.
+    # 2) 평균깊이 계산 시에는, '청구항 1개 = 깊이값 1개'로 센다(종속항 수 = 표본 수).
+    #    └ 단일 종속항: 깊이 = (인용항 최심 깊이 + 1).
+    #    └ 다중 종속항: 그 항만의 깊이 = 인용항별 (최심 깊이 + 1)들의 평균.
+    #      예: 제11항이 제1~6항을 인용(각 깊이 1~6) → (2+3+4+5+6+7)/6 = 4.5.
+    #      → 즉 다중종속항은 여러 인스턴스로 펼치지 않고, 그 항 자체가 하나의 평균 깊이값을 가진다.
     # ==========================================
     row_by_no = {r["no"]: r for r in rows}
     depths = {}
@@ -375,19 +377,19 @@ def parse_claims(text: str, is_registration: bool = False):
         if not r["isDeleted"]:
             _deepest_depth(r["no"], set())
 
-    # 평균깊이: 다중종속항은 인용항 수만큼 인스턴스로 펼쳐서 평균 산정
-    depth_instances = []
+    # 평균깊이: 종속항 1개 = 깊이값 1개. 다중종속항은 자신의 인용항별 깊이의 '평균'을 단일 깊이로 갖는다.
+    depth_per_claim = []
     for r in rows:
         if r["isDeleted"] or r["isIndependent"]:
             continue
         valid_refs = [ref for ref in r["references"] if depths.get(ref) is not None]
         if valid_refs:
-            for ref in valid_refs:          # 단일 종속=1개, 다중 종속=인용항 수만큼
-                depth_instances.append(depths[ref] + 1)
+            per_ref = [depths[ref] + 1 for ref in valid_refs]   # 단일=1개, 다중=인용항 수만큼
+            depth_per_claim.append(sum(per_ref) / len(per_ref))  # 그 항만의 깊이 = 인용항별 깊이 평균
         else:
-            depth_instances.append(depths.get(r["no"], 2))
+            depth_per_claim.append(depths.get(r["no"], 2))
 
-    avg_depth = round(sum(depth_instances) / len(depth_instances), 3) if depth_instances else 0
+    avg_depth = round(sum(depth_per_claim) / len(depth_per_claim), 3) if depth_per_claim else 0
 
     indep_rows = [r for r in rows if r["isIndependent"]]
     has_method = any(r["tail"].endswith('방법') or r["tail"].endswith('공정') for r in indep_rows)
