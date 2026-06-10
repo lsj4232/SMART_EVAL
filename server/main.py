@@ -308,10 +308,15 @@ def parse_claims(text: str, is_registration: bool = False):
                 first_ref = references[0]
                 ref_tail = tail_map.get(first_ref, "")
 
-                # 🚀 [수정] 다중종속(범위/복수 인용, 예 "제N항 내지 제M항 중 어느 한 항",
-                #   "제N항 또는 제M항")은 그 자체가 종속항 전형 구문이므로, 범주가 달라도
-                #   독립항으로 재분류하지 않는다. 범주 전이 → 독립 규칙은 '단일 인용'에만 적용.
-                if not is_multi and not is_same_category(ref_tail, tail):
+                # 🚀 [수정2] 범주 전이 → 독립 규칙.
+                #   - 단일 인용: 종전대로 범주가 다르면 독립항.
+                #   - 다중 인용(범위/복수): 인용항의 범주를 '실제로 아는' 경우(ref_tail 존재)에 한해
+                #     범주가 다르면 독립항으로 본다. 예: "제6항 내지 제10항 …을 실행하는 컴퓨터
+                #     프로그램" → 방법 ≠ 프로그램이므로 독립항(컴퓨터 프로그램항·기록매체항은
+                #     인용 형식과 무관하게 별개 발명 카테고리). 인용항 범주를 알 수 없으면(ref_tail
+                #     공백) 다중종속 형식을 존중하여 종속으로 유지(오분류 방어).
+                ref_known = bool(re.sub(r'\s+', '', ref_tail))
+                if not is_same_category(ref_tail, tail) and (not is_multi or ref_known):
                     is_independent = True
                     reason = f"인용항({ref_tail})과 현재항({tail})의 대상어 범주가 달라 독립항으로 판단함"
                 else:
