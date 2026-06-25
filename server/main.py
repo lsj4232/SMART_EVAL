@@ -382,8 +382,10 @@ def parse_claims(text: str, is_registration: bool = False):
     avg_depth = round(sum(dep_depths) / len(dep_depths), 3) if dep_depths else 0
 
     indep_rows = [r for r in rows if r["isIndependent"]]
-    has_method = any(r["tail"].endswith('방법') or r["tail"].endswith('공정') for r in indep_rows)
-    has_other = any(not (r["tail"].endswith('방법') or r["tail"].endswith('공정')) for r in indep_rows)
+    # 계열 수 산정: '방법'만 방법 계열, '공정'은 (SMART 평가 시스템 관행에 따라) 물건 계열로 본다.
+    #   → 방법 계열과 물건 계열이 모두 존재할 때만 2계열, 그 외엔 1계열.
+    has_method = any(r["tail"].endswith('방법') for r in indep_rows)
+    has_other = any(not r["tail"].endswith('방법') for r in indep_rows)
     claim_series = 2 if (has_method and has_other) else 1
 
     indep_count = len(indep_rows)
