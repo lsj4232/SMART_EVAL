@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pypdf import PdfReader
 from pydantic import BaseModel
 import docx
+from docx.oxml.ns import qn
 
 app = FastAPI(title="SMART Patent Analysis API")
 
@@ -40,7 +41,14 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
             if extracted: text += extracted + "\n\n"
     elif ext == 'docx':
         doc = docx.Document(BytesIO(file_bytes))
-        text = "\n".join([para.text for para in doc.paragraphs])
+        # 🚀 [변경이력 반영 추출] para.text는 <w:ins>(삽입) 텍스트를 버리므로
+        #   자진보정본(청구항 번호·본문이 삽입 run에 있음)에서 청구항이 누락된다.
+        #   문단 XML의 모든 <w:t>를 순서대로 모으면 삽입은 포함(<w:t>)·삭제는
+        #   제외(<w:delText>)되어 '보정 반영 최종본' 텍스트가 된다.
+        text = "\n".join(
+            "".join(t.text or "" for t in para._p.iter(qn('w:t')))
+            for para in doc.paragraphs
+        )
     return text
 
 def extract_patent_data(text: str, is_registration: bool = False) -> dict:
@@ -338,45 +346,61 @@ def parse_claims(text: str, is_registration: bool = False):
         })
 
     # ==========================================
-    # 🚀 [통합 깊이 알고리즘] — 정의 d(c)를 단일 재귀로 구현(하류 전파도 동일 값 사용).
-    #   d(c) = 1                                  (c가 독립항)
-    #        = d(p) + 1                           (c가 단일 종속항, 피인용항 p)
-    #        = (1/|P(c)|) · Σ_{p∈P(c)} (d(p)+1)   (c가 다중 종속항, 인용항 집합 P(c))
-    #   └ 단일 종속항은 |P(c)|=1 이므로 d(p)+1 과 동일(두 분기를 하나로 통합).
-    #   └ 다중 종속항의 평균 깊이는 '하류 청구항이 인용할 때'에도 그대로 전파된다
-    #     (이전의 max 기반 '최심 깊이' 2단 구조 폐기 → 정의와 구현 완전 일치).
-    #   예: 제11항이 제1~6항 인용(각 깊이 1~6) → (2+3+4+5+6+7)/6 = 4.5.
+    # 🚀 [2단 깊이 알고리즘] — 다중종속항의 '자신의 표시깊이'와 '하류 전파깊이'를 분리한다.
+    #   (1) 전파깊이 deep(c) — 하류 청구항이 c를 인용할 때 물려받는 값(최심 경로):
+    #         deep(c) = 1                              (c가 독립항)
+    #                 = max_{p∈P(c)} (deep(p) + 1)     (c가 종속항, 인용항 집합 P(c))
+    #   (2) 표시깊이 disp(c) — c 자신의 종속깊이(평균깊이 산식에 들어가는 값):
+    #         disp(c) = 1                              (c가 독립항)
+    #                 = (1/|P(c)|) · Σ_{p∈P(c)} (deep(p) + 1)   (c가 종속항)
+    #   └ 단일 종속항은 |P(c)|=1 이므로 disp = deep = deep(p)+1.
+    #   └ 다중 종속항은 자신은 인용경로 평균(disp)으로 표시되지만, 그 다중종속항을
+    #     인용하는 하류 청구항에는 최심경로(deep)가 전파된다.
+    #   예: 제3항이 제1·2항 인용 → deep(1)=1, deep(2)=2 → deep(3)=max(2,3)=3,
+    #       disp(3)=(2+3)/2=2.5. 제4항이 제3항 인용 → deep(4)=deep(3)+1=4, disp=4.
     # ==========================================
     row_by_no = {r["no"]: r for r in rows}
-    depths = {}
+    deep = {}   # 전파깊이(최심경로)
 
-    def _depth(no, stack):
+    def _deep(no, stack):
         # 🚀 [방어] 메모이제이션 + 순환 인용 방지(stack)로 무한재귀 차단
-        if no in depths:
-            return depths[no]
+        if no in deep:
+            return deep[no]
         r = row_by_no.get(no)
         if r is None or r["isDeleted"]:
             return None
         if r["isIndependent"]:
-            depths[no] = 1
+            deep[no] = 1
             return 1
         if no in stack:
-            depths[no] = 2
+            deep[no] = 2
             return 2
         next_stack = stack | {no}
         per_ref = []
         for ref in r["references"]:
-            d = _depth(ref, next_stack)
+            d = _deep(ref, next_stack)
             if d is not None:
-                per_ref.append(d + 1)                 # 인용 경로별 깊이 = d(p)+1
-        depths[no] = (sum(per_ref) / len(per_ref)) if per_ref else 2  # 단일=1개, 다중=평균
-        return depths[no]
+                per_ref.append(d + 1)                 # 인용 경로별 깊이 = deep(p)+1
+        deep[no] = max(per_ref) if per_ref else 2     # 전파는 최심경로
+        return deep[no]
 
     for r in rows:
         if not r["isDeleted"]:
-            _depth(r["no"], set())
+            _deep(r["no"], set())
 
-    # 전체 종속항 평균깊이 D̄ = (Σ_{c∈C_dep} d(c)) / |C_dep|  (삭제항 제외 단일+다중 종속항)
+    def _disp(no):
+        # 표시깊이 — 다중종속항은 인용경로 평균, 단일종속항은 deep(p)+1과 동일
+        r = row_by_no.get(no)
+        if r is None or r["isDeleted"]:
+            return None
+        if r["isIndependent"]:
+            return 1
+        per_ref = [deep[ref] + 1 for ref in r["references"] if deep.get(ref) is not None]
+        return (sum(per_ref) / len(per_ref)) if per_ref else 2
+
+    depths = {r["no"]: _disp(r["no"]) for r in rows if not r["isDeleted"]}
+
+    # 전체 종속항 평균깊이 D̄ = (Σ_{c∈C_dep} disp(c)) / |C_dep|  (삭제항 제외 단일+다중 종속항)
     dep_depths = [depths[r["no"]] for r in rows
                   if not r["isDeleted"] and not r["isIndependent"] and depths.get(r["no"]) is not None]
     avg_depth = round(sum(dep_depths) / len(dep_depths), 3) if dep_depths else 0
