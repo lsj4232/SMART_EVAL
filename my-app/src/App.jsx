@@ -120,7 +120,7 @@ export default function App() {
       form.append("earlyPublication", String(earlyPublication));
 
       // 🌟 API URL 환경변수 적용
-      const apiUrl = "https://smart-eval-backend.onrender.com";
+      const apiUrl = import.meta.env.VITE_API_URL || "https://smart-eval-backend.onrender.com";
       const res = await fetch(`${apiUrl}/api/analyze`, { method: "POST", body: form });
       
       if (!res.ok) {
@@ -175,7 +175,7 @@ export default function App() {
       };
 
       // 🌟 API URL 환경변수 적용
-      const apiUrl = "https://smart-eval-backend.onrender.com";
+      const apiUrl = import.meta.env.VITE_API_URL || "https://smart-eval-backend.onrender.com";
       const res = await fetch(`${apiUrl}/api/recalculate`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
